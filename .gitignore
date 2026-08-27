@@ -1,0 +1,25 @@
+# Python virtual environment
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Environment/secrets
+.env
+.env.*
+
+# Raw downloaded datasets
+data/raw/
+
+# Generated/processed datasets
+data/processed/
+
+# VS Code
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db

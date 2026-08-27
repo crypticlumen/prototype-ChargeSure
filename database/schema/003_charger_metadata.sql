@@ -1,0 +1,2 @@
+ALTER TABLE chargers
+ADD COLUMN IF NOT EXISTS number_of_points INTEGER;

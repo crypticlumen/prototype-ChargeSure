@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgis/postgis:17-3.5
+    container_name: chargesure-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: chargesure
+      POSTGRES_USER: chargesure
+      POSTGRES_PASSWORD: chargesure_dev
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - chargesure_pgdata:/var/lib/postgresql/data
+
+volumes:
+  chargesure_pgdata:
