@@ -7,9 +7,21 @@ from data_pipeline.routing.osrm_access import (
 )
 
 
-def enrich_candidates() -> list[dict]:
+def enrich_candidates(
+    vehicle_connector_type: str = "CCS",
+) -> list[dict]:
+    """
+    Get route candidates and enrich them with road-access
+    information.
 
-    candidates = get_route_candidates()
+    The vehicle connector type is passed down to the
+    candidate repository so connector compatibility is
+    evaluated for the actual vehicle.
+    """
+
+    candidates = get_route_candidates(
+        vehicle_connector_type
+    )
 
     enriched = []
 
@@ -29,8 +41,14 @@ def enrich_candidates() -> list[dict]:
 
         enriched_candidate = {
             **candidate,
-            "road_access_km": road_access_km,
-            "road_access_minutes": road_access_minutes,
+
+            "road_access_km": (
+                road_access_km
+            ),
+
+            "road_access_minutes": (
+                road_access_minutes
+            ),
         }
 
         enriched.append(
@@ -42,18 +60,51 @@ def enrich_candidates() -> list[dict]:
 
 if __name__ == "__main__":
 
-    candidates = enrich_candidates()
+    vehicle_connector_type = "CCS"
 
-    print("ENRICHED ROUTE CANDIDATES")
-    print("=" * 110)
+    candidates = enrich_candidates(
+        vehicle_connector_type
+    )
 
     print(
-        f"Candidates: {len(candidates)}"
+        "ENRICHED ROUTE CANDIDATES"
+    )
+
+    print(
+        "=" * 140
+    )
+
+    print(
+        f"Vehicle connector: "
+        f"{vehicle_connector_type}"
+    )
+
+    print(
+        f"Candidates: "
+        f"{len(candidates)}"
     )
 
     print()
 
     for candidate in candidates:
+
+        connector_types = ", ".join(
+            candidate.get(
+                "connector_types",
+                [],
+            )
+        )
+
+        max_power = candidate.get(
+            "max_power_kw"
+        )
+
+        if max_power is None:
+            max_power_text = "unknown"
+        else:
+            max_power_text = (
+                f"{max_power:.2f}"
+            )
 
         print(
             f"{candidate['charger_id']} | "
@@ -64,6 +115,12 @@ if __name__ == "__main__":
             f"{candidate['distance_from_route_km']:.2f} km | "
             f"road access: "
             f"{candidate['road_access_km']:.2f} km | "
+            f"connector: "
+            f"{connector_types} | "
+            f"power: "
+            f"{max_power_text} kW | "
+            f"compatibility: "
+            f"{candidate.get('connector_compatibility', 'UNKNOWN')} | "
             f"time: "
             f"{candidate['road_access_minutes']:.2f} min"
         )

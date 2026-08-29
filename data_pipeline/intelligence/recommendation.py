@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import List
 
 
 @dataclass
@@ -15,107 +16,216 @@ class ChargerCandidate:
     range_safe: bool
 
     reliability_score: float
-    availability_score: float
-    trust_score: float
+    availability_score: float = 50.0
+    trust_score: float = 50.0
 
-    connector_compatible: bool = True
+    connector_compatibility: str = "UNKNOWN"
 
     final_score: float = 0.0
 
 
 def calculate_distance_score(
     road_access_km: float,
+    max_access_km: float,
 ) -> float:
     """
-    Stable score based only on this charger's road-access distance.
-    Smaller distance = better score.
+    Smaller road access distance = better score.
     """
 
-    score = 100.0 / (
-        1.0 + road_access_km
-    )
+    if max_access_km <= 0:
+        return 100.0
 
-    return round(score, 2)
+    score = (
+        1.0
+        - (
+            road_access_km
+            / max_access_km
+        )
+    ) * 100.0
+
+    return max(
+        0.0,
+        min(100.0, score),
+    )
 
 
 def calculate_final_score(
-    candidate: ChargerCandidate,
+    reliability_score: float,
+    range_safe: bool,
+    distance_score: float,
+    availability_score: float,
+    trust_score: float,
+    connector_compatibility: str,
 ) -> float:
+    """
+    Calculate final charger score.
 
-    # Safety gates
-    if not candidate.range_safe:
+    Range safety is a hard safety gate.
+
+    Connector compatibility:
+        COMPATIBLE   -> positive signal
+        UNKNOWN      -> neutral signal
+        INCOMPATIBLE -> rejected before scoring
+    """
+
+    if not range_safe:
         return 0.0
 
-    if not candidate.connector_compatible:
+    if (
+        connector_compatibility
+        == "INCOMPATIBLE"
+    ):
         return 0.0
 
-    distance_score = calculate_distance_score(
-        candidate.road_access_km
-    )
+    if (
+        connector_compatibility
+        == "COMPATIBLE"
+    ):
+        connector_score = 100.0
+
+    else:
+        connector_score = 50.0
 
     score = (
-        candidate.reliability_score * 0.40
+        reliability_score * 0.40
         + distance_score * 0.20
-        + candidate.availability_score * 0.20
-        + candidate.trust_score * 0.20
+        + availability_score * 0.10
+        + trust_score * 0.10
+        + connector_score * 0.20
     )
 
-    return round(score, 2)
+    return round(
+        score,
+        2,
+    )
 
 
 def rank_chargers(
-    candidates: list[ChargerCandidate],
-) -> list[ChargerCandidate]:
+    candidates: List[ChargerCandidate],
+) -> List[ChargerCandidate]:
 
-    safe_candidates = [
+    # --------------------------------------------------
+    # Safety and compatibility gate
+    # --------------------------------------------------
+
+    eligible_candidates = [
         candidate
         for candidate in candidates
-        if candidate.range_safe
-        and candidate.connector_compatible
+        if (
+            candidate.range_safe
+            and candidate.connector_compatibility
+            != "INCOMPATIBLE"
+        )
     ]
 
-    for candidate in safe_candidates:
-        candidate.final_score = calculate_final_score(
-            candidate
+    if not eligible_candidates:
+        return []
+
+    # --------------------------------------------------
+    # Determine maximum road-access distance
+    # --------------------------------------------------
+
+    max_access_km = max(
+        candidate.road_access_km
+        for candidate in eligible_candidates
+    )
+
+    # --------------------------------------------------
+    # Calculate scores
+    # --------------------------------------------------
+
+    for candidate in eligible_candidates:
+
+        distance_score = (
+            calculate_distance_score(
+                candidate.road_access_km,
+                max_access_km,
+            )
         )
 
-    safe_candidates.sort(
+        candidate.final_score = (
+            calculate_final_score(
+                reliability_score=(
+                    candidate.reliability_score
+                ),
+                range_safe=(
+                    candidate.range_safe
+                ),
+                distance_score=(
+                    distance_score
+                ),
+                availability_score=(
+                    candidate.availability_score
+                ),
+                trust_score=(
+                    candidate.trust_score
+                ),
+                connector_compatibility=(
+                    candidate.connector_compatibility
+                ),
+            )
+        )
+
+    # --------------------------------------------------
+    # Sort
+    # --------------------------------------------------
+
+    eligible_candidates.sort(
         key=lambda candidate: (
             -candidate.final_score,
             candidate.road_access_km,
-            -candidate.reliability_score,
+            candidate.route_progress_km,
         )
     )
 
-    return safe_candidates
+    return eligible_candidates
 
 
-def get_recommendation_reasons(
+def get_recommendation_reason(
     candidate: ChargerCandidate,
-) -> list[str]:
+) -> List[str]:
 
     reasons = []
 
-    reasons.append(
-        "Within the vehicle's safe reachable range"
-    )
+    if candidate.range_safe:
+        reasons.append(
+            "Within the vehicle's safe reachable range"
+        )
 
-    if candidate.road_access_km <= 1:
+    if (
+        candidate.connector_compatibility
+        == "COMPATIBLE"
+    ):
+        reasons.append(
+            "Connector compatible with vehicle"
+        )
+
+    elif (
+        candidate.connector_compatibility
+        == "UNKNOWN"
+    ):
+        reasons.append(
+            "Connector compatibility could not be verified"
+        )
+
+    if candidate.road_access_km <= 1.0:
         reasons.append(
             "Very low road access distance"
         )
-    elif candidate.road_access_km <= 3:
+
+    elif candidate.road_access_km <= 3.0:
         reasons.append(
             "Low road access distance"
         )
 
     if candidate.reliability_score >= 85:
         reasons.append(
-            "High reliability"
+            "High reliability score"
         )
+
     elif candidate.reliability_score >= 70:
         reasons.append(
-            "Good reliability"
+            "Good reliability score"
         )
 
     if candidate.availability_score >= 80:
@@ -125,30 +235,34 @@ def get_recommendation_reasons(
 
     if candidate.trust_score >= 80:
         reasons.append(
-            "High user trust"
+            "Strong user trust"
         )
 
     return reasons
 
 
 def recommend(
-    candidates: list[ChargerCandidate],
+    candidates: List[ChargerCandidate],
     top_n: int = 3,
-) -> list[dict]:
+) -> List[dict]:
 
-    ranked = rank_chargers(candidates)
+    ranked = rank_chargers(
+        candidates
+    )
 
-    results = []
+    recommendations = []
 
     for rank, candidate in enumerate(
         ranked[:top_n],
         start=1,
     ):
 
-        results.append(
+        recommendations.append(
             {
                 "rank": rank,
-                "charger_id": candidate.charger_id,
+                "charger_id": (
+                    candidate.charger_id
+                ),
                 "name": candidate.name,
                 "city": candidate.city,
                 "state": candidate.state,
@@ -168,8 +282,6 @@ def recommend(
                     2,
                 ),
 
-                "range_safe": candidate.range_safe,
-
                 "reliability_score": round(
                     candidate.reliability_score,
                     2,
@@ -185,16 +297,24 @@ def recommend(
                     2,
                 ),
 
-                "connector_compatible": (
-                    candidate.connector_compatible
+                "connector_compatibility": (
+                    candidate.connector_compatibility
                 ),
 
-                "final_score": candidate.final_score,
+                "final_score": (
+                    candidate.final_score
+                ),
 
-                "reasons": get_recommendation_reasons(
-                    candidate
+                "range_safe": (
+                    candidate.range_safe
+                ),
+
+                "reasons": (
+                    get_recommendation_reason(
+                        candidate
+                    )
                 ),
             }
         )
 
-    return results
+    return recommendations

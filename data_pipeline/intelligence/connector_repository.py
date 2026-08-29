@@ -11,6 +11,13 @@ DB_CONFIG = {
 
 
 # =========================================================
+# Vehicle configuration for the current prototype
+# =========================================================
+
+VEHICLE_CONNECTOR_TYPE = "CCS"
+
+
+# =========================================================
 # Route candidate query
 # =========================================================
 
@@ -19,9 +26,8 @@ WITH selected_route AS (
     SELECT
         id,
         geometry,
-        ST_Length(
-            geometry::geography
-        ) / 1000.0 AS route_length_km
+        ST_Length(geometry::geography) / 1000.0
+            AS route_length_km
     FROM routes
     ORDER BY id DESC
     LIMIT 1
@@ -101,7 +107,7 @@ ORDER BY route_progress_km;
 
 
 # =========================================================
-# Connector enrichment
+# Connector enrichment query
 # =========================================================
 
 CONNECTOR_QUERY = """
@@ -109,14 +115,16 @@ SELECT
     c.id,
 
     ARRAY_AGG(
-        DISTINCT COALESCE(
+        DISTINCT
+        COALESCE(
             ct.normalized_type,
             'unknown'
         )
-        ORDER BY COALESCE(
-            ct.normalized_type,
-            'unknown'
-        )
+        ORDER BY
+            COALESCE(
+                ct.normalized_type,
+                'unknown'
+            )
     ) AS connector_types,
 
     MAX(cc.power_kw) AS max_power_kw,
@@ -126,12 +134,15 @@ SELECT
         WHEN EXISTS (
             SELECT 1
             FROM charger_connectors cc2
+
             JOIN connector_types ct2
                 ON ct2.raw_connector_type =
                    cc2.connector_type
 
             WHERE cc2.charger_id = c.id
+
               AND ct2.verified = TRUE
+
               AND LOWER(
                     ct2.normalized_type
                   )
@@ -140,21 +151,27 @@ SELECT
         )
         THEN 'COMPATIBLE'
 
+
         WHEN EXISTS (
             SELECT 1
             FROM charger_connectors cc3
+
             LEFT JOIN connector_types ct3
                 ON ct3.raw_connector_type =
                    cc3.connector_type
 
             WHERE cc3.charger_id = c.id
+
               AND (
-                  ct3.raw_connector_type IS NULL
-                  OR ct3.verified = FALSE
-                  OR ct3.normalized_type = 'unknown'
+                    ct3.raw_connector_type IS NULL
+
+                    OR ct3.verified = FALSE
+
+                    OR ct3.normalized_type = 'unknown'
               )
         )
         THEN 'UNKNOWN'
+
 
         ELSE 'INCOMPATIBLE'
 
@@ -175,16 +192,18 @@ GROUP BY c.id;
 """
 
 
+# =========================================================
+# Load connector enrichment for one charger
+# =========================================================
+
 def get_connector_enrichment(
     cursor,
     charger_id: str,
-    vehicle_connector_type: str,
-) -> dict:
-
+):
     cursor.execute(
         CONNECTOR_QUERY,
         (
-            vehicle_connector_type,
+            VEHICLE_CONNECTOR_TYPE,
             charger_id,
         ),
     )
@@ -198,29 +217,26 @@ def get_connector_enrichment(
             "compatibility": "UNKNOWN",
         }
 
+    connector_types = row[1] or []
+
+    max_power_kw = (
+        float(row[2])
+        if row[2] is not None
+        else None
+    )
+
     return {
-        "connector_types": row[1] or [],
-        "max_power_kw": (
-            float(row[2])
-            if row[2] is not None
-            else None
-        ),
+        "connector_types": connector_types,
+        "max_power_kw": max_power_kw,
         "compatibility": row[3],
     }
 
 
-def get_route_candidates(
-    vehicle_connector_type: str = "CCS",
-) -> list[dict]:
-    """
-    Return route candidates enriched with connector
-    compatibility for the supplied vehicle connector.
-    """
+# =========================================================
+# Get route candidates
+# =========================================================
 
-    if not vehicle_connector_type.strip():
-        raise ValueError(
-            "vehicle_connector_type cannot be empty."
-        )
+def get_route_candidates() -> list[dict]:
 
     connection = psycopg2.connect(
         **DB_CONFIG
@@ -257,7 +273,6 @@ def get_route_candidates(
                     get_connector_enrichment(
                         cursor,
                         charger_id,
-                        vehicle_connector_type,
                     )
                 )
 
@@ -296,6 +311,10 @@ def get_route_candidates(
                                 route_point_lat
                             ),
 
+                        # -------------------------
+                        # Connector enrichment
+                        # -------------------------
+
                         "connector_types":
                             connector[
                                 "connector_types"
@@ -316,30 +335,29 @@ def get_route_candidates(
             return candidates
 
     finally:
+
         connection.close()
 
 
 # =========================================================
-# CLI test
+# Display candidates
 # =========================================================
 
-def main():
+if __name__ == "__main__":
 
-    vehicle_connector_type = "CCS"
-
-    candidates = get_route_candidates(
-        vehicle_connector_type
-    )
+    candidates = get_route_candidates()
 
     print(
         "DATABASE ROUTE CANDIDATES"
     )
 
-    print("=" * 140)
+    print(
+        "=" * 130
+    )
 
     print(
         f"Vehicle connector: "
-        f"{vehicle_connector_type}"
+        f"{VEHICLE_CONNECTOR_TYPE}"
     )
 
     print(
@@ -357,14 +375,10 @@ def main():
             ]
         )
 
-        max_power = candidate[
-            "max_power_kw"
-        ]
-
-        max_power_text = (
-            f"{max_power:.2f}"
-            if max_power is not None
-            else "unknown"
+        max_power = (
+            candidate[
+                "max_power_kw"
+            ]
         )
 
         print(
@@ -377,11 +391,7 @@ def main():
             f"connector: "
             f"{connector_types} | "
             f"max power: "
-            f"{max_power_text} kW | "
+            f"{max_power if max_power is not None else 'unknown'} kW | "
             f"compatibility: "
             f"{candidate['connector_compatibility']}"
         )
-
-
-if __name__ == "__main__":
-    main()
