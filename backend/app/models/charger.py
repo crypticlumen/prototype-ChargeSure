@@ -26,14 +26,13 @@ class VehicleClass(str, enum.Enum):
 
 
 class CPO(Base):
-    """Charge Point Operator — the entity that owns/operates a station."""
     __tablename__ = "cpos"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String, nullable=False)
-    operator_reliability_index = Column(Float, default=0.5)  # 0-1, updated nightly
+    operator_reliability_index = Column(Float, default=0.5) 
     ocpi_party_id = Column(String, nullable=True)
-    beckn_bpp_id = Column(String, nullable=True)  # populated once UBC integration is live
+    beckn_bpp_id = Column(String, nullable=True)  
     created_at = Column(DateTime, default=datetime.utcnow)
 
     chargers = relationship("Charger", back_populates="cpo")
@@ -43,21 +42,21 @@ class Charger(Base):
     __tablename__ = "chargers"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    external_id = Column(String, index=True, nullable=True)  # OpenChargeMap / OCPI id
+    external_id = Column(String, index=True, nullable=True)
     cpo_id = Column(UUID(as_uuid=True), ForeignKey("cpos.id"), nullable=True)
 
     name = Column(String, nullable=False)
     address = Column(String, nullable=True)
     location = Column(Geography(geometry_type="POINT", srid=4326), nullable=False, index=True)
 
-    connector_types = Column(String, nullable=False, default=ConnectorType.TYPE2.value)  # CSV
+    connector_types = Column(String, nullable=False, default=ConnectorType.TYPE2.value)  
     supports_2w = Column(Boolean, default=True)
     supports_3w = Column(Boolean, default=True)
     supports_4w = Column(Boolean, default=True)
 
     max_power_kw = Column(Float, nullable=True)
     installed_at = Column(DateTime, nullable=True)
-    last_verified_at = Column(DateTime, nullable=True)  # last confirmed-working timestamp
+    last_verified_at = Column(DateTime, nullable=True)
 
     is_active = Column(Boolean, default=True)
 
@@ -67,7 +66,6 @@ class Charger(Base):
 
 
 class ChargingSession(Base):
-    """A completed or simulated charging session — feeds the reliability model."""
     __tablename__ = "charging_sessions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -76,24 +74,23 @@ class ChargingSession(Base):
     started_at = Column(DateTime, nullable=False)
     ended_at = Column(DateTime, nullable=True)
     energy_kwh = Column(Float, nullable=True)
-    was_successful = Column(Boolean, nullable=False)  # False = failed/aborted session
-    failure_reason = Column(String, nullable=True)  # e.g. "offline", "queue_timeout", "hardware_fault"
-    source = Column(String, default="ocpp")  # ocpp | simulated | crowd_confirmed
+    was_successful = Column(Boolean, nullable=False) 
+    failure_reason = Column(String, nullable=True) 
+    source = Column(String, default="ocpp") 
 
     charger = relationship("Charger", back_populates="sessions")
 
 
 class CrowdReport(Base):
-    """Rider-submitted status report, rate-limited and trust-weighted."""
     __tablename__ = "crowd_reports"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     charger_id = Column(UUID(as_uuid=True), ForeignKey("chargers.id"), nullable=False)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
 
-    reported_status = Column(String, nullable=False)  # working | broken | queued | unknown
-    reporter_trust_score = Column(Float, default=0.5)  # 0-1, built from account history
-    is_geofenced_confirmed = Column(Boolean, default=False)  # GPS check-in within N meters
+    reported_status = Column(String, nullable=False) 
+    reporter_trust_score = Column(Float, default=0.5) 
+    is_geofenced_confirmed = Column(Boolean, default=False)  
     notes = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 

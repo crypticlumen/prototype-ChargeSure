@@ -16,16 +16,12 @@ from app.utils.geo import find_chargers_along_route, charger_lat_lng
 router = APIRouter(prefix="/routes", tags=["routes"])
 osrm_service = OSRMService()
 
-MIN_RELIABILITY_SCORE_TO_SUGGEST = 55.0  # below this, don't recommend the stop at all
+MIN_RELIABILITY_SCORE_TO_SUGGEST = 55.0 
 
 
 @router.post("/plan", response_model=RouteResponse)
 async def plan_route(payload: RouteRequest, db: Session = Depends(get_db)):
-    """
-    The core 'Route, Trust, Book' flow from the pitch: computes the base route, finds
-    chargers along the corridor, scores each for reliability, and attaches a grid-aware
-    off-peak slot recommendation to every suggested stop.
-    """
+
     route = await osrm_service.get_route(
         payload.origin_lat, payload.origin_lng, payload.destination_lat, payload.destination_lng
     )
@@ -41,7 +37,7 @@ async def plan_route(payload: RouteRequest, db: Session = Depends(get_db)):
         )
 
     suggested_stops = []
-    cumulative_km_marker = safe_range_km  # naive: first stop should appear near the range limit
+    cumulative_km_marker = safe_range_km 
     for charger in candidates:
         score, confidence, _ = reliability_engine.score_charger(db, charger)
         if score < MIN_RELIABILITY_SCORE_TO_SUGGEST:
@@ -49,8 +45,7 @@ async def plan_route(payload: RouteRequest, db: Session = Depends(get_db)):
 
         lat, lng = charger_lat_lng(charger)
         slot_start, slot_end, is_grid_aware = grid_slot_recommender.recommend_slot(
-            earliest_arrival=datetime.utcnow()  # placeholder: replace with ETA-to-stop once
-            # per-leg ETAs are computed from the OSRM route annotations.
+            earliest_arrival=datetime.utcnow()  
         )
 
         suggested_stops.append(
@@ -59,7 +54,7 @@ async def plan_route(payload: RouteRequest, db: Session = Depends(get_db)):
                 name=charger.name,
                 latitude=lat,
                 longitude=lng,
-                distance_from_origin_km=cumulative_km_marker,  # refine with real leg distances
+                distance_from_origin_km=cumulative_km_marker,  
                 reliability_score=score,
                 confidence_band=confidence,
                 recommended_slot_start=slot_start,
@@ -68,7 +63,6 @@ async def plan_route(payload: RouteRequest, db: Session = Depends(get_db)):
             )
         )
 
-    # Highest reliability first, so the rider's top recommendation is also the safest bet.
     suggested_stops.sort(key=lambda s: s.reliability_score, reverse=True)
 
     trip = Trip(

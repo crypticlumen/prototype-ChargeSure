@@ -12,15 +12,10 @@ from app.ml.features import build_feature_row, FEATURE_COLUMNS
 
 settings = get_settings()
 
-MIN_SESSIONS_FOR_MODEL = 5  # below this, use the Bayesian prior instead of the ML model
+MIN_SESSIONS_FOR_MODEL = 5  
 
 
 class ReliabilityEngine:
-    """
-    Wraps the trained XGBoost model. Falls back to a Bayesian prior (seeded from the
-    ~18% govt non-operational baseline) for chargers with insufficient session history —
-    this is the cold-start mitigation described in the pitch.
-    """
 
     def __init__(self):
         self._model = None
@@ -39,7 +34,6 @@ class ReliabilityEngine:
                     self._model_version = f.read().strip()
 
     def score_charger(self, db: Session, charger: Charger) -> Tuple[float, str, str]:
-        """Returns (score_0_to_100, confidence_band, model_version)."""
         features = build_feature_row(db, charger)
         session_count = features["session_count_30d"]
 
@@ -57,12 +51,9 @@ class ReliabilityEngine:
         return round(raw_score * 100, 1), confidence, version
 
     def _bayesian_prior(self, features: dict) -> float:
-        """
-        Seeds from the govt operational baseline (1 - 0.18 non-operational rate) and
-        updates with whatever crowd/session signal exists, however sparse.
-        """
-        prior = settings.reliability_prior_baseline  # e.g. 0.82
-        prior_weight = 10  # pseudo-observations behind the prior
+
+        prior = settings.reliability_prior_baseline 
+        prior_weight = 10 
 
         successes = features["session_success_rate_30d"] * features["session_count_30d"]
         observed_weight = features["session_count_30d"]

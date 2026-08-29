@@ -47,8 +47,6 @@ async def create_booking(
     db.commit()
     db.refresh(booking)
 
-    # Route through UBC as a Beckn BAP once the charger's CPO is UBC-registered.
-    # In hackathon/dev mode this returns a stubbed ACK (see beckn_adapter.py).
     if charger.cpo and charger.cpo.beckn_bpp_id:
         ubc_response = await beckn_adapter.confirm(
             transaction_id=str(booking.id),

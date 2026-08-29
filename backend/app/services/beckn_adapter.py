@@ -1,11 +1,3 @@
-"""
-Beckn Application Provider (BAP) adapter.
-
-ChargeSure plugs into the Unified Bharat eCharge (UBC) network as an intelligence
-layer on top of the open Beckn/OCPI protocol, rather than competing with it.
-Phase 1 (hackathon MVP): stubbed responses, no live UBC gateway calls.
-Phase 2: replace _call_ubc_gateway with a real httpx POST once sandbox credentials exist.
-"""
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -36,7 +28,6 @@ class BecknBAPAdapter:
         }
 
     async def search(self, latitude: float, longitude: float, radius_km: float = 10.0) -> dict:
-        """Discover chargers via the UBC network (used to supplement our own PostGIS index)."""
         payload = {
             "context": self._context("search"),
             "message": {
@@ -79,7 +70,6 @@ class BecknBAPAdapter:
 
     async def _call_ubc_gateway(self, path: str, payload: dict) -> dict:
         if settings.environment != "production":
-            # Stub response for local/hackathon use — no live UBC sandbox yet.
             return {
                 "context": payload["context"],
                 "message": {"ack": {"status": "ACK"}},

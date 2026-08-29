@@ -1,10 +1,3 @@
-"""
-Offline training script for the reliability classifier.
-Run manually or via the nightly retraining pipeline (see app/tasks/nightly_retrain.py).
-
-Usage:
-    python -m app.ml.train_model
-"""
 import os
 from datetime import datetime
 
@@ -43,7 +36,7 @@ def train() -> str:
             learning_rate=0.05,
             subsample=0.8,
             colsample_bytree=0.8,
-            objective="reg:logistic",  # outputs a 0-1 probability-like score
+            objective="reg:logistic",  
             random_state=42,
         )
         model.fit(X_train, y_train)

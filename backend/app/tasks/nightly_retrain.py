@@ -15,15 +15,14 @@ def run_nightly_job() -> None:
 
     try:
         train()
-        # Reload the freshly trained model into the running process' singleton engine.
-        global reliability_engine  # noqa: PLW0603
-        reliability_engine.__init__()  # re-run load logic; simplest safe reload here
+        global reliability_engine 
+        reliability_engine.__init__()  
     except RuntimeError as e:
         logger.warning("Skipping model retrain this cycle: %s", e)
 
     db = SessionLocal()
     try:
-        chargers = db.query(Charger).filter(Charger.is_active == True).all()  # noqa: E712
+        chargers = db.query(Charger).filter(Charger.is_active == True).all() 
         for charger in chargers:
             reliability_engine.upsert_score(db, charger)
         logger.info("Refreshed reliability scores for %d chargers", len(chargers))

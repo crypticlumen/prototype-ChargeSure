@@ -1,9 +1,6 @@
 from datetime import datetime, timedelta
 from typing import Tuple
 
-# Placeholder grid-load curve until DISCOM feeds are integrated (Phase 3 roadmap).
-# Values are illustrative relative load multipliers by hour-of-day, informed by
-# typical Indian residential/commercial demand patterns (evening peak).
 DEFAULT_HOURLY_LOAD_MULTIPLIER = {
     0: 0.55, 1: 0.50, 2: 0.48, 3: 0.47, 4: 0.50, 5: 0.60,
     6: 0.75, 7: 0.85, 8: 0.90, 9: 0.88, 10: 0.85, 11: 0.83,
@@ -11,15 +8,10 @@ DEFAULT_HOURLY_LOAD_MULTIPLIER = {
     18: 1.00, 19: 1.00, 20: 0.98, 21: 0.90, 22: 0.75, 23: 0.62,
 }
 
-OFF_PEAK_THRESHOLD = 0.70  # hours at/below this multiplier are considered off-peak
+OFF_PEAK_THRESHOLD = 0.70  
 
 
 class GridAwareSlotRecommender:
-    """
-    Recommends the nearest off-peak charging window to reduce localized load spikes.
-    V2G integration (Phase 3) will replace the static curve with live DISCOM telemetry —
-    the interface is written so that swap-in requires no caller changes.
-    """
 
     def __init__(self, hourly_load_multiplier: dict = None):
         self.hourly_load_multiplier = hourly_load_multiplier or DEFAULT_HOURLY_LOAD_MULTIPLIER
@@ -30,11 +22,7 @@ class GridAwareSlotRecommender:
         charge_duration_minutes: int = 30,
         search_window_hours: int = 6,
     ) -> Tuple[datetime, datetime, bool]:
-        """
-        Returns (slot_start, slot_end, is_grid_aware_recommended).
-        Searches forward from earliest_arrival for the lowest-load hour within the window;
-        if the rider's own arrival hour is already off-peak, recommend it immediately.
-        """
+
         arrival_hour = earliest_arrival.hour
         if self.hourly_load_multiplier[arrival_hour] <= OFF_PEAK_THRESHOLD:
             slot_start = earliest_arrival

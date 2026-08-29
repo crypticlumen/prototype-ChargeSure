@@ -15,8 +15,6 @@ from app.utils.security import get_current_user
 
 router = APIRouter(prefix="/chargers", tags=["chargers"])
 
-# Geofence radius for crowd check-in confirmation — reports outside this are still
-# accepted but flagged as unconfirmed and weighted lower by the reliability engine.
 GEOFENCE_RADIUS_METERS = 150
 
 
@@ -93,7 +91,6 @@ def submit_crowd_report(
 
     charger_point = to_shape(charger.location)
     reporter_point = Point(payload.longitude, payload.latitude)
-    # Rough planar distance check; fine at this radius. Swap for ST_DWithin if precision matters.
     distance_deg = charger_point.distance(reporter_point)
     is_geofenced = distance_deg * 111_000 <= GEOFENCE_RADIUS_METERS  # ~meters per degree at equator
 

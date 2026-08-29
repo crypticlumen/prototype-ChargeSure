@@ -30,7 +30,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten to the deployed frontend origin(s) before production
+    allow_origins=["*"],  
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -49,7 +49,7 @@ app.include_router(ingestion.router)
 def on_startup():
     logger.info("Starting ChargeSure API in %s mode", settings.environment)
     init_postgis()
-    Base.metadata.create_all(bind=engine)  # dev convenience — use Alembic migrations in production
+    Base.metadata.create_all(bind=engine)  
 
     if settings.environment != "test":
         start_scheduler()

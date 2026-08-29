@@ -5,17 +5,14 @@ from app.config import get_settings
 
 settings = get_settings()
 
-# Conservative per-km energy assumptions used to derive "safe range" from vehicle_range_km.
-# 2W/3W battery discharge doesn't scale linearly with 4W profiles, so we apply a buffer.
 RANGE_SAFETY_BUFFER = {
-    "2W": 0.80,   # plan stops at 80% of rated range
+    "2W": 0.80,  
     "3W": 0.75,
     "4W": 0.90,
 }
 
 
 class OSRMService:
-    """Thin client around a self-hosted OSRM instance, with a Google Directions fallback."""
 
     def __init__(self, base_url: Optional[str] = None):
         self.base_url = base_url or settings.osrm_base_url
@@ -28,7 +25,6 @@ class OSRMService:
         dest_lng: float,
         profile: str = "driving",
     ) -> dict:
-        """Returns distance (km), duration (min), and GeoJSON geometry."""
         url = (
             f"{self.base_url}/route/v1/{profile}/"
             f"{origin_lng},{origin_lat};{dest_lng},{dest_lat}"
@@ -54,7 +50,7 @@ class OSRMService:
         return {
             "distance_km": round(route["distance"] / 1000, 2),
             "duration_minutes": round(route["duration"] / 60, 1),
-            "geometry": route["geometry"],  # GeoJSON LineString
+            "geometry": route["geometry"], 
         }
 
     async def _google_directions_fallback(
@@ -83,6 +79,5 @@ class OSRMService:
 
     @staticmethod
     def safe_range_km(vehicle_class: str, vehicle_range_km: float, current_charge_pct: float) -> float:
-        """The distance the rider can safely travel before needing a stop."""
         buffer = RANGE_SAFETY_BUFFER.get(vehicle_class, 0.85)
         return round(vehicle_range_km * buffer * (current_charge_pct / 100), 1)

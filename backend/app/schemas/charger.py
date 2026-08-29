@@ -35,7 +35,7 @@ class ChargerOut(ChargerBase):
 
 class CrowdReportCreate(BaseModel):
     charger_id: UUID
-    reported_status: str  # working | broken | queued | unknown
+    reported_status: str 
     latitude: float
     longitude: float
     notes: Optional[str] = None

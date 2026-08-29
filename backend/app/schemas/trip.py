@@ -10,7 +10,7 @@ class RouteRequest(BaseModel):
     origin_lng: float
     destination_lat: float
     destination_lng: float
-    vehicle_class: str = "2W"  # 2W | 3W | 4W
+    vehicle_class: str = "2W"  
     vehicle_range_km: float = 80.0
     current_charge_pct: float = 100.0
     user_id: Optional[UUID] = None
@@ -33,7 +33,7 @@ class RouteResponse(BaseModel):
     trip_id: UUID
     distance_km: float
     duration_minutes: float
-    geometry: dict  # GeoJSON LineString from OSRM
+    geometry: dict  
     suggested_stops: List[ChargerStop]
 
 

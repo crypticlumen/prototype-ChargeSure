@@ -30,12 +30,11 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     vehicle_class = Column(Enum(VehicleClassEnum), default=VehicleClassEnum.TWO_WHEELER)
     vehicle_range_km = Column(Float, default=80.0)
-    trust_score = Column(Float, default=0.5)  # rises with confirmed-accurate crowd reports
+    trust_score = Column(Float, default=0.5)  
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class Trip(Base):
-    """A single route-planning request, cached for analytics + grid-load modelling."""
     __tablename__ = "trips"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -46,12 +45,11 @@ class Trip(Base):
     vehicle_class = Column(Enum(VehicleClassEnum), default=VehicleClassEnum.TWO_WHEELER)
     vehicle_range_km = Column(Float, nullable=False)
 
-    planned_route = Column(JSONB, nullable=True)  # OSRM geometry + suggested stops
+    planned_route = Column(JSONB, nullable=True) 
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class Booking(Base):
-    """An off-peak charging slot reservation, Beckn order-equivalent."""
     __tablename__ = "bookings"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -63,7 +61,7 @@ class Booking(Base):
     slot_end = Column(DateTime, nullable=False)
     status = Column(Enum(BookingStatus), default=BookingStatus.PENDING)
 
-    beckn_transaction_id = Column(String, nullable=True)  # set once routed through UBC
+    beckn_transaction_id = Column(String, nullable=True) 
     is_grid_aware_recommended = Column(Boolean, default=False)
 
     created_at = Column(DateTime, default=datetime.utcnow)
