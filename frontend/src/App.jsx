@@ -38,11 +38,33 @@ const normalizeKeys = (obj) =>
     Object.entries(obj).map(([k, v]) => [k.toLowerCase().replace(/[\s_]+/g, ""), v])
   );
 
-// Derives a display name from an email address, e.g. "ram001@gmail.com" -> "Ram001"
-const getDisplayName = (email) => {
+// Fallback display name from an email, used only if no stored name is found
+// (e.g. signing in on a browser that never saw the sign-up for this email).
+const getFallbackName = (email) => {
   if (!email) return "there";
   const prefix = email.split("@")[0];
   return prefix.charAt(0).toUpperCase() + prefix.slice(1);
+};
+
+const NAME_STORAGE_PREFIX = "chargesure_name_";
+
+// TODO: this localStorage lookup is a stand-in for a real backend. Once
+// sign-up/sign-in hit an actual API, the name should come back with the
+// user record instead of being looked up client-side like this.
+const getStoredName = (email) => {
+  try {
+    return localStorage.getItem(NAME_STORAGE_PREFIX + email);
+  } catch {
+    return null;
+  }
+};
+
+const setStoredName = (email, name) => {
+  try {
+    localStorage.setItem(NAME_STORAGE_PREFIX + email, name);
+  } catch {
+    // ignore storage errors (e.g. private browsing)
+  }
 };
 
 export default function App() {
@@ -54,8 +76,13 @@ export default function App() {
   // ---- auth state ----
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [userEmail, setUserEmail] = useState("");
+<<<<<<< HEAD
   const [username, setUsername] = useState("");
+=======
+  const [userName, setUserName] = useState("");
+>>>>>>> 0e45001fd3805e9d054a8565158b3a7cb2069431
   const [mode, setMode] = useState("signin");
+  const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [notRobot, setNotRobot] = useState(false);
@@ -73,6 +100,7 @@ export default function App() {
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
 
   const activeVehicle = vehicles.find((v) => v.id === activeVehicleId) || null;
+<<<<<<< HEAD
   const displayName = username || getDisplayName(userEmail);
 
   // ---- restore session on reload ----
@@ -105,11 +133,21 @@ export default function App() {
     if (!isAuthenticated || !userEmail) return;
     localStorage.setItem(`chargesure_vehicles_${userEmail}`, JSON.stringify(vehicles));
   }, [vehicles, isAuthenticated, userEmail]);
+=======
+  const displayName = userName || getFallbackName(userEmail);
+>>>>>>> 0e45001fd3805e9d054a8565158b3a7cb2069431
 
   // ---- auth handlers ----
   const validate = () => {
     const next = {};
+<<<<<<< HEAD
     if (mode === "signup" && !username.trim()) next.username = "Username is required.";
+=======
+
+    if (mode === "signup" && !fullName.trim()) {
+      next.fullName = "Full name is required.";
+    }
+>>>>>>> 0e45001fd3805e9d054a8565158b3a7cb2069431
 
     if (!email.trim()) next.email = "Email is required.";
     else if (!EMAIL_REGEX.test(email.trim())) next.email = "Enter a valid email address.";
@@ -125,6 +163,7 @@ export default function App() {
     return Object.keys(next).length === 0;
   };
 
+<<<<<<< HEAD
   const handleSubmit = async (e) => {
   e.preventDefault();
   if (!validate()) return;
@@ -151,6 +190,30 @@ export default function App() {
   const handleGoogleContinue = () => {
     setUserEmail("google-user@example.com");
     setUsername("");
+=======
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!validate()) return;
+
+    const trimmedEmail = email.trim();
+
+    if (mode === "signup") {
+      const name = fullName.trim();
+      setStoredName(trimmedEmail, name);
+      setUserName(name);
+    } else {
+      setUserName(getStoredName(trimmedEmail) || getFallbackName(trimmedEmail));
+    }
+
+    setUserEmail(trimmedEmail);
+    setIsAuthenticated(true);
+  };
+
+  const handleGoogleContinue = () => {
+    const demoEmail = "google-user@example.com";
+    setUserEmail(demoEmail);
+    setUserName(getStoredName(demoEmail) || "Google User");
+>>>>>>> 0e45001fd3805e9d054a8565158b3a7cb2069431
     setIsAuthenticated(true);
   };
 
@@ -184,7 +247,12 @@ export default function App() {
     clearSession();
     setIsAuthenticated(false);
     setUserEmail("");
+<<<<<<< HEAD
     setUsername("");
+=======
+    setUserName("");
+    setFullName("");
+>>>>>>> 0e45001fd3805e9d054a8565158b3a7cb2069431
     setEmail("");
     setPassword("");
     setNotRobot(false);
@@ -328,6 +396,7 @@ export default function App() {
           <form className="auth-form" onSubmit={handleSubmit} noValidate>
             {mode === "signup" && (
               <>
+<<<<<<< HEAD
                 <label className="auth-label" htmlFor="username">
                   Username
                 </label>
@@ -345,6 +414,25 @@ export default function App() {
             )}
 
             <label className="auth-label" htmlFor="email">
+=======
+                <label className="auth-label" htmlFor="fullName">
+                  Full name
+                </label>
+                <input
+                  id="fullName"
+                  type="text"
+                  className="auth-input"
+                  placeholder="e.g. Kavya Sharma"
+                  autoComplete="name"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                />
+                {errors.fullName && <p className="auth-error">{errors.fullName}</p>}
+              </>
+            )}
+
+            <label className="auth-label" htmlFor="email" style={mode === "signup" ? { marginTop: 16 } : undefined}>
+>>>>>>> 0e45001fd3805e9d054a8565158b3a7cb2069431
               Email
             </label>
             <input
@@ -680,7 +768,10 @@ export default function App() {
                 </div>
               </div>
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 0e45001fd3805e9d054a8565158b3a7cb2069431
               <div className="modal-actions">
                 <button type="button" className="modal-cancel" onClick={closeVehicleForm}>
                   Cancel
