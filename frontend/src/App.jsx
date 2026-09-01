@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import heroImg from './assets/hero.png'
 import reactLogo from './assets/react.svg'
 import viteLogo from './assets/vite.svg'
 import './App.css'
-import { registerUser, loginUser } from './api/client';
+import { registerUser, loginUser, getSavedSession, saveSession, clearSession, updateUsername } from './api/client';
 
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -54,6 +54,7 @@ export default function App() {
   // ---- auth state ----
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [userEmail, setUserEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [mode, setMode] = useState("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -61,6 +62,7 @@ export default function App() {
   const [errors, setErrors] = useState({});
   const [authToken, setAuthToken] = useState(null);
   const [authError, setAuthError] = useState(""); 
+  const [sessionChecked, setSessionChecked] = useState(false);
 
   // ---- app state (post-login) ----
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -71,11 +73,44 @@ export default function App() {
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
 
   const activeVehicle = vehicles.find((v) => v.id === activeVehicleId) || null;
-  const displayName = getDisplayName(userEmail);
+  const displayName = username || getDisplayName(userEmail);
+
+  // ---- restore session on reload ----
+  useEffect(() => {
+    const saved = getSavedSession();
+    if (saved?.token) {
+      setAuthToken(saved.token);
+      setUserEmail(saved.email || "");
+      setUsername(saved.username || "");
+      setIsAuthenticated(true);
+    }
+    setSessionChecked(true);
+  }, []);
+
+  // ---- restore vehicles for the logged-in user ----
+  useEffect(() => {
+    if (!isAuthenticated || !userEmail) return;
+    const raw = localStorage.getItem(`chargesure_vehicles_${userEmail}`);
+    if (raw) {
+      try {
+        setVehicles(JSON.parse(raw));
+      } catch {
+        // ignore corrupt cache
+      }
+    }
+  }, [isAuthenticated, userEmail]);
+
+  // ---- persist vehicles whenever they change ----
+  useEffect(() => {
+    if (!isAuthenticated || !userEmail) return;
+    localStorage.setItem(`chargesure_vehicles_${userEmail}`, JSON.stringify(vehicles));
+  }, [vehicles, isAuthenticated, userEmail]);
 
   // ---- auth handlers ----
   const validate = () => {
     const next = {};
+    if (mode === "signup" && !username.trim()) next.username = "Username is required.";
+
     if (!email.trim()) next.email = "Email is required.";
     else if (!EMAIL_REGEX.test(email.trim())) next.email = "Enter a valid email address.";
 
@@ -98,12 +133,16 @@ export default function App() {
   try {
     const data =
       mode === "signup"
-        ? await registerUser({ email: email.trim(), password })
+        ? await registerUser({ username: username.trim(), email: email.trim(), password })
         : await loginUser({ email: email.trim(), password });
+
+    const resolvedUsername = mode === "signup" ? username.trim() : data.username || "";
 
     setAuthToken(data.access_token);
     setUserEmail(email.trim());
+    setUsername(resolvedUsername);
     setIsAuthenticated(true);
+    saveSession({ token: data.access_token, email: email.trim(), username: resolvedUsername });
   } catch (err) {
     setAuthError(err.message || "Something went wrong. Try again.");
   }
@@ -111,7 +150,29 @@ export default function App() {
 
   const handleGoogleContinue = () => {
     setUserEmail("google-user@example.com");
+    setUsername("");
     setIsAuthenticated(true);
+  };
+
+  const handleSaveUsername = async (newUsername) => {
+    const trimmed = newUsername.trim();
+    if (!trimmed) return { ok: false, error: "Username can't be empty." };
+
+    try {
+      if (authToken) {
+        await updateUsername(trimmed, authToken);
+      }
+      setUsername(trimmed);
+      saveSession({ token: authToken, email: userEmail, username: trimmed });
+      return { ok: true };
+    } catch (err) {
+      // Backend endpoint may not exist yet (e.g. during the Google sign-in
+      // flow, or before /auth/me PATCH is implemented) — save locally so
+      // the UI still reflects the change, but flag it wasn't synced.
+      setUsername(trimmed);
+      saveSession({ token: authToken, email: userEmail, username: trimmed });
+      return { ok: true, warning: "Saved locally — couldn't sync to the server yet." };
+    }
   };
 
   const switchMode = () => {
@@ -120,8 +181,10 @@ export default function App() {
   };
 
   const resetAllState = () => {
+    clearSession();
     setIsAuthenticated(false);
     setUserEmail("");
+    setUsername("");
     setEmail("");
     setPassword("");
     setNotRobot(false);
@@ -137,6 +200,7 @@ export default function App() {
     // TODO: call the backend's delete-account endpoint here once it exists.
     // This should permanently remove the user's data server-side, not just
     // reset local state.
+    if (userEmail) localStorage.removeItem(`chargesure_vehicles_${userEmail}`);
     resetAllState();
     setShowDeleteAccount(false);
   };
@@ -223,6 +287,9 @@ export default function App() {
   };
 
   // ================= AUTH SCREEN =================
+  if (!sessionChecked) {
+    return null; // or a small loading spinner
+  }
   if (!isAuthenticated) {
     return (
       <div className={`auth-page ${themeClass}`}>
@@ -259,6 +326,24 @@ export default function App() {
           </div>
 
           <form className="auth-form" onSubmit={handleSubmit} noValidate>
+            {mode === "signup" && (
+              <>
+                <label className="auth-label" htmlFor="username">
+                  Username
+                </label>
+                <input
+                  id="username"
+                  type="text"
+                  className="auth-input"
+                  placeholder="Choose a username"
+                  autoComplete="username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                />
+                {errors.username && <p className="auth-error">{errors.username}</p>}
+              </>
+            )}
+
             <label className="auth-label" htmlFor="email">
               Email
             </label>
@@ -446,6 +531,8 @@ export default function App() {
         {activeTab === "settings" && (
           <SettingsTab
             userEmail={userEmail}
+            username={username}
+            onSaveUsername={handleSaveUsername}
             theme={theme}
             onSetTheme={setTheme}
             onDeleteAccount={() => setShowDeleteAccount(true)}
@@ -593,11 +680,6 @@ export default function App() {
                 </div>
               </div>
 
-              <p className="tab-note">
-                TODO: auto-estimating battery/range from brand + model + year needs a vehicle
-                spec lookup on the backend — for now these are entered manually or filled from
-                an uploaded file.
-              </p>
 
               <div className="modal-actions">
                 <button type="button" className="modal-cancel" onClick={closeVehicleForm}>
@@ -730,9 +812,6 @@ function RouteTab({ vehicles }) {
         <button type="button" className="auth-submit" style={{ marginTop: 20 }}>
           Find Route
         </button>
-        <p className="tab-note">
-          TODO: connect to the routing/reliability-scoring API once the backend endpoint is ready.
-        </p>
       </div>
     </div>
   );
@@ -845,10 +924,72 @@ function BookingsTab() {
   );
 }
 
-function SettingsTab({ userEmail, theme, onSetTheme, onDeleteAccount }) {
+function SettingsTab({ userEmail, username, onSaveUsername, theme, onSetTheme, onDeleteAccount }) {
+  const [isEditingUsername, setIsEditingUsername] = useState(false);
+  const [draftUsername, setDraftUsername] = useState(username || "");
+  const [usernameError, setUsernameError] = useState("");
+  const [usernameNotice, setUsernameNotice] = useState("");
+
+  const startEditing = () => {
+    setDraftUsername(username || "");
+    setUsernameError("");
+    setUsernameNotice("");
+    setIsEditingUsername(true);
+  };
+
+  const cancelEditing = () => {
+    setIsEditingUsername(false);
+    setUsernameError("");
+  };
+
+  const submitUsername = async (e) => {
+    e.preventDefault();
+    setUsernameError("");
+    setUsernameNotice("");
+    const result = await onSaveUsername(draftUsername);
+    if (!result.ok) {
+      setUsernameError(result.error || "Couldn't save username.");
+      return;
+    }
+    if (result.warning) setUsernameNotice(result.warning);
+    setIsEditingUsername(false);
+  };
+
   return (
     <div className="tab-content">
       <p className="tab-subtitle">Account settings.</p>
+
+      <div className="panel" style={{ marginBottom: 20 }}>
+        <label className="auth-label">Username</label>
+        {isEditingUsername ? (
+          <form onSubmit={submitUsername}>
+            <input
+              className="auth-input"
+              value={draftUsername}
+              autoFocus
+              placeholder="Choose a username"
+              onChange={(e) => setDraftUsername(e.target.value)}
+            />
+            {usernameError && <p className="auth-error">{usernameError}</p>}
+            <div className="settings-row" style={{ marginTop: 10 }}>
+              <button type="submit" className="auth-submit" style={{ width: "auto" }}>
+                Save
+              </button>
+              <button type="button" className="vehicle-action-link" onClick={cancelEditing}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="settings-row">
+            <span>{username || "No username set"}</span>
+            <button type="button" className="vehicle-action-link" onClick={startEditing}>
+              {username ? "Edit" : "Add username"}
+            </button>
+          </div>
+        )}
+        {!isEditingUsername && usernameNotice && <p className="tab-note">{usernameNotice}</p>}
+      </div>
 
       <div className="panel" style={{ marginBottom: 20 }}>
         <label className="auth-label">Email</label>

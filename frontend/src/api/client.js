@@ -18,10 +18,11 @@ async function request(path, options = {}) {
 
 // ---- Auth ----
 
-export function registerUser({ email, password, vehicleClass = "2W", vehicleRangeKm = 80 }) {
+export function registerUser({ username, email, password, vehicleClass = "2W", vehicleRangeKm = 80 }) {
   return request("/auth/register", {
     method: "POST",
     body: JSON.stringify({
+      username,
       email,
       password,
       vehicle_class: vehicleClass,
@@ -29,6 +30,41 @@ export function registerUser({ email, password, vehicleClass = "2W", vehicleRang
     }),
   });
   // returns { access_token, token_type }
+}
+
+// ---- Session persistence ----
+// Call this once on app load to check for a saved session.
+export function getSavedSession() {
+  const raw = localStorage.getItem("chargesure_session");
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+export function saveSession({ token, email, username }) {
+  localStorage.setItem(
+    "chargesure_session",
+    JSON.stringify({ token, email, username })
+  );
+}
+
+export function clearSession() {
+  localStorage.removeItem("chargesure_session");
+}
+
+// ---- Profile ----
+// PATCH /auth/me needs to exist on the backend and accept { username }.
+// Until it does, callers should catch the error and fall back to a
+// local-only update (see App.jsx's handleSaveUsername).
+export function updateUsername(username, token) {
+  return request("/auth/me", {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ username }),
+  });
 }
 
 export async function loginUser({ email, password }) {

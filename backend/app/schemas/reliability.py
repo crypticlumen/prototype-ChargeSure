@@ -6,8 +6,8 @@ from pydantic import BaseModel
 
 class ReliabilityScoreOut(BaseModel):
     charger_id: UUID
-    score: float  # 0-100
-    confidence_band: str  # low | medium | high
+    score: float 
+    confidence_band: str 
     model_version: str
     computed_at: datetime
 
