@@ -3,6 +3,7 @@ import heroImg from './assets/hero.png'
 import reactLogo from './assets/react.svg'
 import viteLogo from './assets/vite.svg'
 import './App.css'
+import { registerUser, loginUser } from './api/client';
 
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -58,6 +59,8 @@ export default function App() {
   const [password, setPassword] = useState("");
   const [notRobot, setNotRobot] = useState(false);
   const [errors, setErrors] = useState({});
+  const [authToken, setAuthToken] = useState(null);
+  const [authError, setAuthError] = useState(""); 
 
   // ---- app state (post-login) ----
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -87,13 +90,24 @@ export default function App() {
     return Object.keys(next).length === 0;
   };
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (validate()) {
-      setUserEmail(email.trim());
-      setIsAuthenticated(true);
-    }
-  };
+  const handleSubmit = async (e) => {
+  e.preventDefault();
+  if (!validate()) return;
+
+  setAuthError("");
+  try {
+    const data =
+      mode === "signup"
+        ? await registerUser({ email: email.trim(), password })
+        : await loginUser({ email: email.trim(), password });
+
+    setAuthToken(data.access_token);
+    setUserEmail(email.trim());
+    setIsAuthenticated(true);
+  } catch (err) {
+    setAuthError(err.message || "Something went wrong. Try again.");
+  }
+};
 
   const handleGoogleContinue = () => {
     setUserEmail("google-user@example.com");
@@ -288,6 +302,7 @@ export default function App() {
               </div>
             </div>
             {errors.captcha && <p className="auth-error">{errors.captcha}</p>}
+            {authError && <p className="auth-error">{authError}</p>}
 
             <button type="submit" className="auth-submit">
               {mode === "signin" ? "Sign In" : "Create Account"}
@@ -413,7 +428,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === "route" && <RouteTab vehicles={vehicles} />}
+        {activeTab === "route" && <RouteTab vehicles={vehicles} authToken={authToken} />}
 
         {activeTab === "vehicles" && (
           <VehiclesTab

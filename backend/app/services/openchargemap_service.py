@@ -10,7 +10,6 @@ settings = get_settings()
 
 
 class OpenChargeMapService:
-    """Bootstraps the charger index from OpenChargeMap's public registry."""
 
     def __init__(self):
         self.base_url = settings.openchargemap_base_url
@@ -36,7 +35,6 @@ class OpenChargeMapService:
             return resp.json()
 
     def upsert_chargers(self, db: Session, raw_pois: list) -> int:
-        """Idempotent upsert keyed on OpenChargeMap ID. Returns count of new chargers created."""
         created = 0
         for poi in raw_pois:
             external_id = str(poi.get("ID"))
