@@ -9,6 +9,9 @@ class ChargerCandidate:
     city: str | None
     state: str | None
 
+    latitude: float
+    longitude: float
+
     route_progress_km: float
     road_access_km: float
     required_distance_km: float
@@ -266,6 +269,8 @@ def recommend(
                 "name": candidate.name,
                 "city": candidate.city,
                 "state": candidate.state,
+                "latitude": candidate.latitude,
+                "longitude": candidate.longitude,
 
                 "route_progress_km": round(
                     candidate.route_progress_km,

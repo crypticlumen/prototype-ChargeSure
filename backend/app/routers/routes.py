@@ -1,87 +1,74 @@
-from datetime import datetime
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-from geoalchemy2.shape import from_shape, to_shape
-from shapely.geometry import Point
+from fastapi import APIRouter
 
-from app.database import get_db
-from app.models import Trip
-from app.schemas.trip import RouteRequest, RouteResponse, ChargerStop
+from app.schemas.trip import (
+    RouteRequest,
+    RouteResponse,
+    ChargerStop,
+)
 from app.services.osrm_service import OSRMService
-from app.services.reliability_engine import reliability_engine
-from app.services.grid_slot_recommender import grid_slot_recommender
-from app.utils.geo import find_chargers_along_route, charger_lat_lng
+from app.services.intelligence_adapter import (
+    build_intelligent_recommendations,
+)
 
-router = APIRouter(prefix="/routes", tags=["routes"])
+router = APIRouter(
+    prefix="/routes",
+    tags=["routes"],
+)
+
 osrm_service = OSRMService()
 
-MIN_RELIABILITY_SCORE_TO_SUGGEST = 55.0 
 
-
-@router.post("/plan", response_model=RouteResponse)
-async def plan_route(payload: RouteRequest, db: Session = Depends(get_db)):
-
+@router.post(
+    "/plan",
+    response_model=RouteResponse,
+)
+async def plan_route(
+    payload: RouteRequest,
+):
     route = await osrm_service.get_route(
-        payload.origin_lat, payload.origin_lng, payload.destination_lat, payload.destination_lng
+        payload.origin_lat,
+        payload.origin_lng,
+        payload.destination_lat,
+        payload.destination_lng,
     )
 
-    safe_range_km = osrm_service.safe_range_km(
-        payload.vehicle_class, payload.vehicle_range_km, payload.current_charge_pct
+    intelligence = build_intelligent_recommendations(
+        route=route,
+        vehicle_class=payload.vehicle_class,
+        vehicle_range_km=payload.vehicle_range_km,
+        current_charge_pct=payload.current_charge_pct,
+        vehicle_connector_type=(
+            payload.vehicle_connector_type
+        ),
+        top_n=3,
     )
-
-    candidates = []
-    if route["distance_km"] > safe_range_km:
-        candidates = find_chargers_along_route(
-            db, route["geometry"], corridor_width_km=3.0, vehicle_class=payload.vehicle_class
-        )
 
     suggested_stops = []
-    cumulative_km_marker = safe_range_km 
-    for charger in candidates:
-        score, confidence, _ = reliability_engine.score_charger(db, charger)
-        if score < MIN_RELIABILITY_SCORE_TO_SUGGEST:
-            continue
 
-        lat, lng = charger_lat_lng(charger)
-        slot_start, slot_end, is_grid_aware = grid_slot_recommender.recommend_slot(
-            earliest_arrival=datetime.utcnow()  
-        )
-
+    for result in intelligence["recommendations"]:
         suggested_stops.append(
             ChargerStop(
-                charger_id=charger.id,
-                name=charger.name,
-                latitude=lat,
-                longitude=lng,
-                distance_from_origin_km=cumulative_km_marker,  
-                reliability_score=score,
-                confidence_band=confidence,
-                recommended_slot_start=slot_start,
-                recommended_slot_end=slot_end,
-                is_grid_aware_recommended=is_grid_aware,
+                charger_id=str(result["charger_id"]),
+                name=result["name"],
+                latitude=float(result["latitude"]),
+                longitude=float(result["longitude"]),
+                distance_from_origin_km=float(
+                    result["required_distance_km"]
+                ),
+                reliability_score=float(
+                    result["reliability_score"]
+                ),
+                confidence_band="medium",
+                recommended_slot_start=None,
+                recommended_slot_end=None,
+                is_grid_aware_recommended=False,
             )
         )
 
-    suggested_stops.sort(key=lambda s: s.reliability_score, reverse=True)
-
-    trip = Trip(
-        user_id=payload.user_id,
-        origin=from_shape(Point(payload.origin_lng, payload.origin_lat), srid=4326),
-        destination=from_shape(Point(payload.destination_lng, payload.destination_lat), srid=4326),
-        vehicle_class=payload.vehicle_class,
-        vehicle_range_km=payload.vehicle_range_km,
-        planned_route={
-            "geometry": route["geometry"],
-            "suggested_stop_ids": [str(s.charger_id) for s in suggested_stops],
-        },
-    )
-    db.add(trip)
-    db.commit()
-    db.refresh(trip)
-
     return RouteResponse(
-        trip_id=trip.id,
+        trip_id=uuid4(),
         distance_km=route["distance_km"],
         duration_minutes=route["duration_minutes"],
         geometry=route["geometry"],

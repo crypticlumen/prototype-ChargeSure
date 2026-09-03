@@ -1,25 +1,29 @@
-# Python virtual environment
+# Python virtual environments
 .venv/
 venv/
 env/
 
-# Python cache
-__pycache__/
-*.py[cod]
-
-# Environment/secrets
+# Environment / secrets
 .env
 .env.*
+!.env.example
 
-# Raw downloaded datasets
-data/raw/
-
-# Generated/processed datasets
-data/processed/
+# Python cache / tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
 
 # VS Code
 .vscode/
 
-# OS files
-.DS_Store
-Thumbs.db
+# Frontend dependencies / build
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# Generated data
+data/raw/
+data/processed/

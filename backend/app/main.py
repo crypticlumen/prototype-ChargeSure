@@ -8,7 +8,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from app.config import get_settings
-from app.database import Base, engine, init_postgis
+from app.database import init_postgis
 from app.routers import auth, chargers, routes, reliability, booking, beckn, ingestion
 from app.tasks.nightly_retrain import start_scheduler
 
@@ -49,7 +49,7 @@ app.include_router(ingestion.router)
 def on_startup():
     logger.info("Starting ChargeSure API in %s mode", settings.environment)
     init_postgis()
-    Base.metadata.create_all(bind=engine)  
+
 
     if settings.environment != "test":
         start_scheduler()

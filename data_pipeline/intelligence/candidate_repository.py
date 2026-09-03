@@ -1,3 +1,4 @@
+import json
 import psycopg2
 
 
@@ -10,21 +11,22 @@ DB_CONFIG = {
 }
 
 
-# =========================================================
-# Route candidate query
-# =========================================================
-
 QUERY = """
 WITH selected_route AS (
     SELECT
-        id,
+        ST_SetSRID(
+            ST_GeomFromGeoJSON(%s),
+            4326
+        ) AS geometry
+),
+
+route_info AS (
+    SELECT
         geometry,
         ST_Length(
             geometry::geography
         ) / 1000.0 AS route_length_km
-    FROM routes
-    ORDER BY id DESC
-    LIMIT 1
+    FROM selected_route
 ),
 
 candidates AS (
@@ -42,8 +44,7 @@ candidates AS (
         r.route_length_km
 
     FROM chargers c
-
-    CROSS JOIN selected_route r
+    CROSS JOIN route_info r
 
     WHERE ST_DWithin(
         c.location,
@@ -100,10 +101,6 @@ ORDER BY route_progress_km;
 """
 
 
-# =========================================================
-# Connector enrichment
-# =========================================================
-
 CONNECTOR_QUERY = """
 SELECT
     c.id,
@@ -122,21 +119,16 @@ SELECT
     MAX(cc.power_kw) AS max_power_kw,
 
     CASE
-
         WHEN EXISTS (
             SELECT 1
             FROM charger_connectors cc2
             JOIN connector_types ct2
                 ON ct2.raw_connector_type =
                    cc2.connector_type
-
             WHERE cc2.charger_id = c.id
               AND ct2.verified = TRUE
-              AND LOWER(
-                    ct2.normalized_type
-                  )
-                  =
-                  LOWER(%s)
+              AND LOWER(ct2.normalized_type)
+                  = LOWER(%s)
         )
         THEN 'COMPATIBLE'
 
@@ -146,7 +138,6 @@ SELECT
             LEFT JOIN connector_types ct3
                 ON ct3.raw_connector_type =
                    cc3.connector_type
-
             WHERE cc3.charger_id = c.id
               AND (
                   ct3.raw_connector_type IS NULL
@@ -157,7 +148,6 @@ SELECT
         THEN 'UNKNOWN'
 
         ELSE 'INCOMPATIBLE'
-
     END AS compatibility
 
 FROM chargers c
@@ -210,28 +200,32 @@ def get_connector_enrichment(
 
 
 def get_route_candidates(
+    route_geometry: dict,
     vehicle_connector_type: str = "CCS",
 ) -> list[dict]:
     """
-    Return route candidates enriched with connector
-    compatibility for the supplied vehicle connector.
+    Get charger candidates around the supplied
+    current OSRM route geometry.
+
+    No dependency on the global latest route.
     """
+
+    if not route_geometry:
+        return []
 
     if not vehicle_connector_type.strip():
         raise ValueError(
             "vehicle_connector_type cannot be empty."
         )
 
-    connection = psycopg2.connect(
-        **DB_CONFIG
-    )
+    connection = psycopg2.connect(**DB_CONFIG)
 
     try:
-
         with connection.cursor() as cursor:
 
             cursor.execute(
-                QUERY
+                QUERY,
+                (json.dumps(route_geometry),),
             )
 
             rows = cursor.fetchall()
@@ -253,12 +247,10 @@ def get_route_candidates(
                     route_point_lat,
                 ) = row
 
-                connector = (
-                    get_connector_enrichment(
-                        cursor,
-                        charger_id,
-                        vehicle_connector_type,
-                    )
+                connector = get_connector_enrichment(
+                    cursor,
+                    charger_id,
+                    vehicle_connector_type,
                 )
 
                 candidates.append(
@@ -267,49 +259,29 @@ def get_route_candidates(
                         "name": name,
                         "city": city,
                         "state": state,
-
-                        "latitude": float(
-                            latitude
+                        "latitude": float(latitude),
+                        "longitude": float(longitude),
+                        "distance_from_route_km": float(
+                            distance_from_route_km
                         ),
-
-                        "longitude": float(
-                            longitude
+                        "route_progress_km": float(
+                            route_progress_km
                         ),
-
-                        "distance_from_route_km":
-                            float(
-                                distance_from_route_km
-                            ),
-
-                        "route_progress_km":
-                            float(
-                                route_progress_km
-                            ),
-
-                        "route_point_lon":
-                            float(
-                                route_point_lon
-                            ),
-
-                        "route_point_lat":
-                            float(
-                                route_point_lat
-                            ),
-
-                        "connector_types":
-                            connector[
-                                "connector_types"
-                            ],
-
-                        "max_power_kw":
-                            connector[
-                                "max_power_kw"
-                            ],
-
-                        "connector_compatibility":
-                            connector[
-                                "compatibility"
-                            ],
+                        "route_point_lon": float(
+                            route_point_lon
+                        ),
+                        "route_point_lat": float(
+                            route_point_lat
+                        ),
+                        "connector_types": connector[
+                            "connector_types"
+                        ],
+                        "max_power_kw": connector[
+                            "max_power_kw"
+                        ],
+                        "connector_compatibility": connector[
+                            "compatibility"
+                        ],
                     }
                 )
 
@@ -317,71 +289,3 @@ def get_route_candidates(
 
     finally:
         connection.close()
-
-
-# =========================================================
-# CLI test
-# =========================================================
-
-def main():
-
-    vehicle_connector_type = "CCS"
-
-    candidates = get_route_candidates(
-        vehicle_connector_type
-    )
-
-    print(
-        "DATABASE ROUTE CANDIDATES"
-    )
-
-    print("=" * 140)
-
-    print(
-        f"Vehicle connector: "
-        f"{vehicle_connector_type}"
-    )
-
-    print(
-        f"Candidates found: "
-        f"{len(candidates)}"
-    )
-
-    print()
-
-    for candidate in candidates:
-
-        connector_types = ", ".join(
-            candidate[
-                "connector_types"
-            ]
-        )
-
-        max_power = candidate[
-            "max_power_kw"
-        ]
-
-        max_power_text = (
-            f"{max_power:.2f}"
-            if max_power is not None
-            else "unknown"
-        )
-
-        print(
-            f"{candidate['charger_id']} | "
-            f"{candidate['name']} | "
-            f"route progress: "
-            f"{candidate['route_progress_km']:.2f} km | "
-            f"from route: "
-            f"{candidate['distance_from_route_km']:.2f} km | "
-            f"connector: "
-            f"{connector_types} | "
-            f"max power: "
-            f"{max_power_text} kW | "
-            f"compatibility: "
-            f"{candidate['connector_compatibility']}"
-        )
-
-
-if __name__ == "__main__":
-    main()
