@@ -994,8 +994,7 @@ function RouteTab({ vehicles, userEmail }) {
   const [routeResult, setRouteResult] = useState(() => savedRoute?.routeResult || null);
   const [bookedChargerIds, setBookedChargerIds] = useState(() => savedRoute?.bookedChargerIds || []);
   const [selectedCharger, setSelectedCharger] = useState(null);
-  const [reportCharger, setReportCharger] = useState(null);
-  const [activeModal, setActiveModal] = useState(null);
+  const [showReportModal, setShowReportModal] = useState(false);
   const [reportStatus, setReportStatus] = useState("");
   const [reportNotes, setReportNotes] = useState("");
   const [reportLoading, setReportLoading] = useState(false);
@@ -1114,9 +1113,9 @@ function RouteTab({ vehicles, userEmail }) {
 
     const best = scored[0];
     if (!best) throw new Error(`Could not resolve "${place}" to a usable Indian location.`);
-    // Do not reject legitimate long-distance destinations. The geocoder score
-    // already uses place, city, district, state, locality, importance, and
-    // proximity signals to select the best candidate.
+    if (isDestination && near && isLikelyLocalShorthand(trimmedPlace) && Number.isFinite(best.distanceFromOriginKm) && best.distanceFromOriginKm > 250) {
+      throw new Error(`Could not confidently resolve "${place}" near ${originCity || "your starting location"}. Try "${place}, ${originCity || "your city"}".`);
+    }
     return {
       lat: best.lat, lng: best.lng, displayName: best.candidate.display_name,
       context: best.context, distanceFromOriginKm: best.distanceFromOriginKm,
@@ -1183,7 +1182,7 @@ function RouteTab({ vehicles, userEmail }) {
   };
 
   const handleFindRoute = async () => {
-    setError(""); setRouteResult(null); setBookedChargerIds([]); setSelectedCharger(null); setReportCharger(null); setActiveModal(null); setReportSuccess("");
+    setError(""); setRouteResult(null); setBookedChargerIds([]); setSelectedCharger(null); setReportSuccess("");
     if (!from.trim() || !to.trim()) return setError("Enter both a starting point and destination.");
     if (!selectedVehicle) return setError("Add and select a vehicle before planning a route.");
     if (!selectedVehicle.range || Number(selectedVehicle.range) <= 0) return setError("Please enter a valid vehicle range.");
@@ -1203,8 +1202,9 @@ function RouteTab({ vehicles, userEmail }) {
       setLoading(true);
       const origin = await geocodePlace(from.trim(), { isDestination: false });
       const destination = await geocodePlace(to.trim(), { isDestination: true, near: origin, context: origin.context });
-      // Long-distance destinations are valid (for example, Visakhapatnam -> Indore).
-      // Do not reject them solely because they are far from the origin.
+      if (isLikelyLocalShorthand(to.trim()) && Number.isFinite(destination.distanceFromOriginKm) && destination.distanceFromOriginKm > 500) {
+        throw new Error(`The destination "${to.trim()}" resolved too far from ${origin.context?.city || "your starting point"}. Please enter a more specific destination.`);
+      }
 
       const response = await fetch(`${API_BASE_URL}/routes/plan`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -1247,66 +1247,32 @@ function RouteTab({ vehicles, userEmail }) {
     } finally { setBookingLoading(""); }
   };
 
-  const closeReportModal = () => {
-    if (reportLoading) return;
-    setActiveModal(null);
-    setReportCharger(null);
-    setReportStatus("");
-    setReportNotes("");
-    setReportSuccess("");
-  };
-
   const openReportModal = (stop) => {
-    setSelectedCharger(null);
-    setReportCharger(stop);
-    setActiveModal("report");
-    setReportStatus("");
-    setReportNotes("");
-    setReportSuccess("");
-    setError("");
+    setSelectedCharger(stop); setReportStatus(""); setReportNotes(""); setReportSuccess(""); setError(""); setShowReportModal(true);
   };
 
   const handleSubmitReport = async () => {
-    if (!reportCharger) return;
+    if (!selectedCharger) return;
     if (!reportStatus) { setError("Select the current charger status."); return; }
     try {
-      setReportLoading(true);
-      setError("");
-      setReportSuccess("");
-
+      setReportLoading(true); setError(""); setReportSuccess("");
       const response = await fetch(`${API_BASE_URL}/reports`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          charger_id: reportCharger.charger_id,
+          charger_id: selectedCharger.charger_id,
           reported_status: reportStatus,
-          latitude: Number(reportCharger.latitude),
-          longitude: Number(reportCharger.longitude),
-          user_email: userEmail || null,
-          notes: reportNotes.trim() || null,
+          latitude: Number(selectedCharger.latitude), longitude: Number(selectedCharger.longitude),
+          user_email: userEmail || null, notes: reportNotes.trim() || null,
         }),
       });
-
-      let data = null;
-      try {
-        data = await response.json();
-      } catch {
-        data = null;
-      }
-
-      if (!response.ok) {
-        throw new Error(data?.detail || `Report submission failed (${response.status}).`);
-      }
-
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Could not submit your report.");
       setReportSuccess("Thanks — your charger report was recorded.");
-      setReportStatus("");
-      setReportNotes("");
+      setReportStatus(""); setReportNotes("");
+      setTimeout(() => setShowReportModal(false), 900);
     } catch (err) {
-      console.error("Crowd report error:", err);
-      setError(err.message || "Could not submit your report.");
-    } finally {
-      setReportLoading(false);
-    }
+      console.error("Crowd report error:", err); setError(err.message || "Could not submit your report.");
+    } finally { setReportLoading(false); }
   };
 
   const routeCoordinates = Array.isArray(routeResult?.geometry?.coordinates)
@@ -1365,7 +1331,7 @@ function RouteTab({ vehicles, userEmail }) {
         </div>
 
         <button type="button" className="auth-submit" style={{ marginTop: 20 }} onClick={handleFindRoute} disabled={loading}>{loading ? "Planning route..." : "Find Route"}</button>
-        {error && activeModal !== "report" && <p className="auth-error" style={{ marginTop: 14 }}>{error}</p>}
+        {error && !showReportModal && <p className="auth-error" style={{ marginTop: 14 }}>{error}</p>}
       </div>
 
       {routeResult && (
@@ -1423,13 +1389,13 @@ function RouteTab({ vehicles, userEmail }) {
                 const reliability = Number(stop.reliability_score);
                 const routeDist = Number(stop.distance_from_origin_km);
                 return <div className="vehicle-card" key={stop.charger_id}>
-                  <div className="vehicle-card-top"><div><span className="type-badge">#{index + 1} {chargingRequired ? "Recommended" : "Optional"}</span><button type="button" onClick={() => { setReportCharger(null); setSelectedCharger(stop); setActiveModal("details"); }} style={{ display: "block", marginTop: 10, padding: 0, border: "none", background: "none", color: "inherit", textAlign: "left", cursor: "pointer", font: "inherit" }}><h3 className="vehicle-name" style={{ margin: 0 }}>{stop.name}</h3></button><p className="vehicle-reg">{stop.charger_id}</p></div><span className="active-badge">{confidence}</span></div>
+                  <div className="vehicle-card-top"><div><span className="type-badge">#{index + 1} {chargingRequired ? "Recommended" : "Optional"}</span><button type="button" onClick={() => setSelectedCharger(stop)} style={{ display: "block", marginTop: 10, padding: 0, border: "none", background: "none", color: "inherit", textAlign: "left", cursor: "pointer", font: "inherit" }}><h3 className="vehicle-name" style={{ margin: 0 }}>{stop.name}</h3></button><p className="vehicle-reg">{stop.charger_id}</p></div><span className="active-badge">{confidence}</span></div>
                   <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 10, background: "rgba(127,127,127,0.08)", fontSize: 12, fontWeight: 600 }}>{rankingLabel}</div>
                   <div className="vehicle-stats" style={{ marginTop: 14 }}><div><span className="vehicle-stat-label">Reliability</span><span className="vehicle-stat-value">{Number.isFinite(reliability) ? `${reliability.toFixed(1)}%` : "—"}</span></div><div><span className="vehicle-stat-label">Route distance</span><span className="vehicle-stat-value">{Number.isFinite(routeDist) ? `${routeDist.toFixed(2)} km` : "—"}</span></div></div>
                   <div style={{ marginTop: 14, borderTop: "1px solid rgba(127,127,127,0.15)", paddingTop: 14 }}><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px 16px" }}><div><span className="vehicle-stat-label">Confidence</span><span className="vehicle-stat-value">{confidence}</span></div><div><span className="vehicle-stat-label">Connector</span><span className="vehicle-stat-value">{connectorStatus.compatible ? "✓" : "✕"} {connectorStatus.label}</span></div><div><span className="vehicle-stat-label">Est. arrival</span><span className="vehicle-stat-value">{formatTime(stop.estimated_arrival)}</span></div><div><span className="vehicle-stat-label">Availability</span><span className="vehicle-stat-value">{availability}</span></div><div><span className="vehicle-stat-label">Grid</span><span className="vehicle-stat-value">{stop.is_grid_aware_recommended ? "Optimized" : "Near ETA"}</span></div></div></div>
                   <div style={{ marginTop: 16, padding: 12, borderRadius: 10, border: "1px solid rgba(127,127,127,0.18)" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}><span className="connector-chip">{stop.is_grid_aware_recommended ? "Grid-aware slot" : departureMode === "scheduled" ? "Scheduled-trip slot" : "Near-ETA slot"}</span>{availability === "Available" && <span style={{ fontSize: 12, fontWeight: 700 }}>● Available</span>}</div>{stop.recommended_slot_start ? <p className="tab-note" style={{ marginTop: 10, fontWeight: 600 }}>Charging slot: {formatTime(stop.recommended_slot_start)} – {formatTime(stop.recommended_slot_end)}</p> : <p className="tab-note" style={{ marginTop: 10 }}>No charging slot is currently available.</p>}</div>
                   <div style={{ marginTop: 14, padding: 12, borderRadius: 10, border: "1px solid rgba(127,127,127,0.14)" }}><span className="vehicle-stat-label">{chargingRequired ? "Why recommended" : "Why this charger is available"}</span><p className="tab-note" style={{ marginTop: 6, lineHeight: 1.5 }}>{why}</p></div>
-                  <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}><button type="button" className="vehicle-action-link" onClick={() => { setReportCharger(null); setSelectedCharger(stop); setActiveModal("details"); }} style={{ border: "none", background: "none", padding: 0, cursor: "pointer" }}>View details</button><button type="button" className="vehicle-action-link" onClick={() => openReportModal(stop)} style={{ border: "none", background: "none", padding: 0, cursor: "pointer" }}>Report status</button><a href={`https://www.google.com/maps/dir/?api=1&destination=${stop.latitude},${stop.longitude}`} target="_blank" rel="noreferrer" className="vehicle-action-link" style={{ textDecoration: "none" }}>Open in Maps</a>{!isBooked && <button type="button" className="vehicle-action-link" onClick={() => handleBookSlot(stop)} disabled={bookingLoading === stop.charger_id} style={{ border: "none", background: "none", cursor: bookingLoading === stop.charger_id ? "wait" : "pointer", padding: 0 }}>{bookingLoading === stop.charger_id ? "Booking..." : "Book Slot"}</button>}</div>
+                  <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}><button type="button" className="vehicle-action-link" onClick={() => setSelectedCharger(stop)} style={{ border: "none", background: "none", padding: 0, cursor: "pointer" }}>View details</button><button type="button" className="vehicle-action-link" onClick={() => openReportModal(stop)} style={{ border: "none", background: "none", padding: 0, cursor: "pointer" }}>Report status</button><a href={`https://www.google.com/maps/dir/?api=1&destination=${stop.latitude},${stop.longitude}`} target="_blank" rel="noreferrer" className="vehicle-action-link" style={{ textDecoration: "none" }}>Open in Maps</a>{!isBooked && <button type="button" className="vehicle-action-link" onClick={() => handleBookSlot(stop)} disabled={bookingLoading === stop.charger_id} style={{ border: "none", background: "none", cursor: bookingLoading === stop.charger_id ? "wait" : "pointer", padding: 0 }}>{bookingLoading === stop.charger_id ? "Booking..." : "Book Slot"}</button>}</div>
                   {isBooked && <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 10, border: "1px solid rgba(127,127,127,0.18)" }}><p className="tab-note" style={{ margin: 0, fontWeight: 700 }}>✓ Booking confirmed</p><p className="tab-note" style={{ marginTop: 4 }}>This charging station is reserved for your selected slot.</p></div>}
                 </div>;
               })}
@@ -1438,18 +1404,18 @@ function RouteTab({ vehicles, userEmail }) {
         </div>
       )}
 
-      {selectedChargerDetails && activeModal === "details" && <div className="modal-overlay" onClick={() => { setSelectedCharger(null); setActiveModal(null); }} role="presentation"><div className="modal-card" style={{ width: "min(760px, 94vw)", maxHeight: "88vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}><div><span className="type-badge">{selectedChargerDetails.recommendation_label || "Charger details"}</span><h2 className="modal-title" style={{ marginTop: 10, marginBottom: 6 }}>{selectedChargerDetails.name}</h2><p className="vehicle-reg">{selectedChargerDetails.charger_id}</p></div><button type="button" className="modal-cancel" onClick={() => { setSelectedCharger(null); setActiveModal(null); }}>✕ Close</button></div>
+      {selectedChargerDetails && <div className="modal-overlay" onClick={() => setSelectedCharger(null)} role="presentation"><div className="modal-card" style={{ width: "min(760px, 94vw)", maxHeight: "88vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}><div><span className="type-badge">{selectedChargerDetails.recommendation_label || "Charger details"}</span><h2 className="modal-title" style={{ marginTop: 10, marginBottom: 6 }}>{selectedChargerDetails.name}</h2><p className="vehicle-reg">{selectedChargerDetails.charger_id}</p></div><button type="button" className="modal-cancel" onClick={() => setSelectedCharger(null)}>✕ Close</button></div>
         <div style={{ marginTop: 18, padding: 16, borderRadius: 12, border: "1px solid rgba(127,127,127,0.18)", background: "rgba(127,127,127,0.06)" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}><div><span className="vehicle-stat-label">Reliability</span><div style={{ marginTop: 4, fontSize: 28, fontWeight: 800 }}>{Number.isFinite(selectedChargerDetails.reliability) ? `${selectedChargerDetails.reliability.toFixed(1)}%` : "—"}</div></div><div style={{ textAlign: "right" }}><span className="vehicle-stat-label">Confidence</span><div className="active-badge" style={{ marginTop: 7, display: "inline-flex" }}>{selectedChargerDetails.confidence}</div></div></div><p className="tab-note" style={{ marginTop: 10 }}>ChargeSure&apos;s predicted reliability for this charger, together with the confidence of that prediction.</p></div>
         <div style={{ marginTop: 18 }}><h3 className="settings-row-title">Charger Status</h3><div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginTop: 12 }}><div className="panel"><span className="vehicle-stat-label">Availability</span><span className="vehicle-stat-value">{selectedChargerDetails.availability}</span></div><div className="panel"><span className="vehicle-stat-label">Connector</span><span className="vehicle-stat-value">{selectedChargerDetails.connectorStatus.compatible ? "✓" : "✕"} {selectedChargerDetails.connectorStatus.label}</span></div><div className="panel"><span className="vehicle-stat-label">Estimated arrival</span><span className="vehicle-stat-value">{formatTime(selectedChargerDetails.estimated_arrival)}</span></div><div className="panel"><span className="vehicle-stat-label">Grid</span><span className="vehicle-stat-value">{selectedChargerDetails.is_grid_aware_recommended ? "Optimized" : "Near ETA"}</span></div></div></div>
         <div style={{ marginTop: 18 }}><h3 className="settings-row-title">Trip Fit</h3><div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginTop: 12 }}><div className="panel"><span className="vehicle-stat-label">Route distance</span><span className="vehicle-stat-value">{Number.isFinite(selectedChargerDetails.routeDistance) ? `${selectedChargerDetails.routeDistance.toFixed(2)} km` : "—"}</span></div><div className="panel"><span className="vehicle-stat-label">Range safety</span><span className="vehicle-stat-value">{chargingRequired ? "Safe charging option" : "Optional backup"}</span></div><div className="panel"><span className="vehicle-stat-label">Vehicle</span><span className="vehicle-stat-value">{selectedVehicle ? `${selectedVehicle.brand} ${selectedVehicle.model}` : "—"}</span></div><div className="panel"><span className="vehicle-stat-label">Compatibility</span><span className="vehicle-stat-value">{selectedChargerDetails.connectorStatus.compatible ? "Compatible" : "Not compatible"}</span></div></div></div>
         <div style={{ marginTop: 18, padding: 14, borderRadius: 10, border: "1px solid rgba(127,127,127,0.14)" }}><span className="vehicle-stat-label">Why this charger?</span><p className="tab-note" style={{ marginTop: 7, lineHeight: 1.6 }}>{getWhyThisCharger(selectedChargerDetails, Math.max(0, routeResult?.suggested_stops?.findIndex((s) => s.charger_id === selectedChargerDetails.charger_id) ?? 0))}</p></div>
         <div style={{ marginTop: 18 }}><h3 className="settings-row-title">Recommended Charging Slot</h3><div style={{ marginTop: 12, padding: 14, borderRadius: 10, border: "1px solid rgba(127,127,127,0.16)" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}><span className="connector-chip">{selectedChargerDetails.is_grid_aware_recommended ? "Grid-aware slot" : departureMode === "scheduled" ? "Scheduled-trip slot" : "Near-ETA slot"}</span><span style={{ fontSize: 12, fontWeight: 700 }}>{selectedChargerDetails.availability === "Available" ? "● Available" : selectedChargerDetails.availability}</span></div>{selectedChargerDetails.recommended_slot_start ? <p className="tab-note" style={{ marginTop: 10, fontWeight: 700 }}>Charging slot: {formatTime(selectedChargerDetails.recommended_slot_start)} – {formatTime(selectedChargerDetails.recommended_slot_end)}</p> : <p className="tab-note" style={{ marginTop: 10 }}>No charging slot is currently available.</p>}</div></div>
-        <div className="modal-actions" style={{ marginTop: 20 }}><button type="button" className="modal-cancel" onClick={() => { setSelectedCharger(null); setActiveModal(null); }}>Close</button><button type="button" className="vehicle-action-link" onClick={() => openReportModal(selectedChargerDetails)} style={{ border: "none", background: "none", cursor: "pointer" }}>Report status</button><a href={`https://www.google.com/maps/dir/?api=1&destination=${selectedChargerDetails.latitude},${selectedChargerDetails.longitude}`} target="_blank" rel="noreferrer" className="vehicle-action-link" style={{ textDecoration: "none" }}>Open in Maps</a>{bookedChargerIds.includes(selectedChargerDetails.charger_id) ? <span className="active-badge" style={{ display: "inline-flex", alignItems: "center" }}>✓ Booking confirmed</span> : <button type="button" className="auth-submit modal-save" onClick={() => handleBookSlot(selectedChargerDetails)} disabled={bookingLoading === selectedChargerDetails.charger_id}>{bookingLoading === selectedChargerDetails.charger_id ? "Booking..." : "Book Slot"}</button>}</div>
+        <div className="modal-actions" style={{ marginTop: 20 }}><button type="button" className="modal-cancel" onClick={() => setSelectedCharger(null)}>Close</button><button type="button" className="vehicle-action-link" onClick={() => openReportModal(selectedChargerDetails)} style={{ border: "none", background: "none", cursor: "pointer" }}>Report status</button><a href={`https://www.google.com/maps/dir/?api=1&destination=${selectedChargerDetails.latitude},${selectedChargerDetails.longitude}`} target="_blank" rel="noreferrer" className="vehicle-action-link" style={{ textDecoration: "none" }}>Open in Maps</a>{bookedChargerIds.includes(selectedChargerDetails.charger_id) ? <span className="active-badge" style={{ display: "inline-flex", alignItems: "center" }}>✓ Booking confirmed</span> : <button type="button" className="auth-submit modal-save" onClick={() => handleBookSlot(selectedChargerDetails)} disabled={bookingLoading === selectedChargerDetails.charger_id}>{bookingLoading === selectedChargerDetails.charger_id ? "Booking..." : "Book Slot"}</button>}</div>
       </div></div>}
 
-      {activeModal === "report" && reportCharger && <div className="modal-overlay" onClick={closeReportModal} role="presentation"><div className="modal-card" style={{ width: "min(560px, 94vw)" }} onClick={(e) => e.stopPropagation()}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14 }}><div><span className="type-badge">Crowd report</span><h2 className="modal-title" style={{ marginTop: 10, marginBottom: 6 }}>Report charger status</h2><p className="vehicle-reg">{reportCharger.name} · {reportCharger.charger_id}</p></div><button type="button" className="modal-cancel" onClick={closeReportModal}>✕ Close</button></div>
+      {showReportModal && selectedCharger && <div className="modal-overlay" onClick={() => !reportLoading && setShowReportModal(false)} role="presentation"><div className="modal-card" style={{ width: "min(560px, 94vw)" }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14 }}><div><span className="type-badge">Crowd report</span><h2 className="modal-title" style={{ marginTop: 10, marginBottom: 6 }}>Report charger status</h2><p className="vehicle-reg">{selectedCharger.name} · {selectedCharger.charger_id}</p></div><button type="button" className="modal-cancel" onClick={() => !reportLoading && setShowReportModal(false)}>✕ Close</button></div>
         <p className="tab-subtitle" style={{ marginTop: 18 }}>Help ChargeSure keep charger availability and reliability signals fresh.</p>
         <label className="auth-label" style={{ marginTop: 16 }}>Current status</label>
         <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
@@ -1458,7 +1424,7 @@ function RouteTab({ vehicles, userEmail }) {
         <label className="auth-label" style={{ marginTop: 16 }}>Optional note</label>
         <textarea className="auth-input" rows="4" placeholder="Add what you observed..." value={reportNotes} onChange={(e) => setReportNotes(e.target.value)} style={{ resize: "vertical" }} />
         {(error || reportSuccess) && <p className={reportSuccess ? "tab-note" : "auth-error"} style={{ marginTop: 12, fontWeight: reportSuccess ? 600 : undefined }}>{reportSuccess || error}</p>}
-        <div className="modal-actions" style={{ marginTop: 18 }}><button type="button" className="modal-cancel" onClick={closeReportModal} disabled={reportLoading}>{reportSuccess ? "Done" : "Cancel"}</button>{!reportSuccess && <button type="button" className="auth-submit modal-save" onClick={handleSubmitReport} disabled={reportLoading || !reportStatus}>{reportLoading ? "Submitting..." : "Submit report"}</button>}</div>
+        <div className="modal-actions" style={{ marginTop: 18 }}><button type="button" className="modal-cancel" onClick={() => !reportLoading && setShowReportModal(false)}>Cancel</button><button type="button" className="auth-submit modal-save" onClick={handleSubmitReport} disabled={reportLoading}>{reportLoading ? "Submitting..." : "Submit report"}</button></div>
       </div></div>}
     </div>
   );

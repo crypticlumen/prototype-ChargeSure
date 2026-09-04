@@ -1,4 +1,9 @@
 import argparse
+import json
+import os
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from data_pipeline.intelligence.candidate_enrichment import (
     enrich_candidates,
@@ -15,6 +20,7 @@ from data_pipeline.intelligence.recommendation import (
 )
 
 from data_pipeline.intelligence.reliability import (
+    get_operational_signals,
     get_reliability_score,
 )
 
@@ -23,12 +29,21 @@ from data_pipeline.intelligence.reliability import (
 # Vehicle configuration
 # =========================================================
 
-BATTERY_PERCENT = 42.0
-BATTERY_CAPACITY_KWH = 3.2
-EFFICIENCY_WH_PER_KM = 45.0
-SAFETY_RESERVE_PERCENT = 20.0
+DEFAULT_BATTERY_PERCENT = 42.0
+DEFAULT_BATTERY_CAPACITY_KWH = 3.2
+DEFAULT_EFFICIENCY_WH_PER_KM = 45.0
+DEFAULT_SAFETY_RESERVE_PERCENT = 20.0
 
 DEFAULT_CONNECTOR_TYPE = "CCS"
+
+# Ahmedabad -> Vadodara
+DEFAULT_ORIGIN_LAT = 23.0225
+DEFAULT_ORIGIN_LNG = 72.5714
+
+DEFAULT_DESTINATION_LAT = 22.3072
+DEFAULT_DESTINATION_LNG = 73.1812
+
+DEFAULT_OSRM_BASE_URL = "https://router.project-osrm.org"
 
 
 # =========================================================
@@ -49,7 +64,201 @@ def parse_args():
         ),
     )
 
+    parser.add_argument(
+        "--origin-lat",
+        type=float,
+        default=DEFAULT_ORIGIN_LAT,
+    )
+
+    parser.add_argument(
+        "--origin-lng",
+        type=float,
+        default=DEFAULT_ORIGIN_LNG,
+    )
+
+    parser.add_argument(
+        "--destination-lat",
+        type=float,
+        default=DEFAULT_DESTINATION_LAT,
+    )
+
+    parser.add_argument(
+        "--destination-lng",
+        type=float,
+        default=DEFAULT_DESTINATION_LNG,
+    )
+
+    parser.add_argument(
+        "--battery-percent",
+        type=float,
+        default=DEFAULT_BATTERY_PERCENT,
+    )
+
+    parser.add_argument(
+        "--battery-capacity-kwh",
+        type=float,
+        default=DEFAULT_BATTERY_CAPACITY_KWH,
+    )
+
+    parser.add_argument(
+        "--efficiency-wh-per-km",
+        type=float,
+        default=DEFAULT_EFFICIENCY_WH_PER_KM,
+    )
+
+    parser.add_argument(
+        "--safety-reserve-percent",
+        type=float,
+        default=DEFAULT_SAFETY_RESERVE_PERCENT,
+    )
+
     return parser.parse_args()
+
+
+# =========================================================
+# OSRM route
+# =========================================================
+
+def get_osrm_route(
+    origin_lat: float,
+    origin_lng: float,
+    destination_lat: float,
+    destination_lng: float,
+) -> dict:
+    """
+    Fetch the current road route from OSRM.
+
+    Returns a GeoJSON LineString geometry suitable for
+    candidate_repository.py.
+    """
+
+    base_url = os.getenv(
+        "OSRM_BASE_URL",
+        DEFAULT_OSRM_BASE_URL,
+    ).rstrip("/")
+
+    coordinates = (
+        f"{origin_lng},{origin_lat};"
+        f"{destination_lng},{destination_lat}"
+    )
+
+    query = urllib.parse.urlencode(
+        {
+            "overview": "full",
+            "geometries": "geojson",
+            "steps": "false",
+        }
+    )
+
+    url = (
+        f"{base_url}/route/v1/driving/"
+        f"{coordinates}?{query}"
+    )
+
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "ChargeSure/1.0",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(
+            request,
+            timeout=30,
+        ) as response:
+            payload = response.read().decode("utf-8")
+
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(
+            f"OSRM returned HTTP {exc.code}."
+        ) from exc
+
+    except urllib.error.URLError as exc:
+        raise RuntimeError(
+            f"Could not reach OSRM: {exc.reason}"
+        ) from exc
+
+    except TimeoutError as exc:
+        raise RuntimeError(
+            "OSRM request timed out."
+        ) from exc
+
+    try:
+        data = json.loads(payload)
+
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            "OSRM returned invalid JSON."
+        ) from exc
+
+    if data.get("code") != "Ok":
+        raise RuntimeError(
+            f"OSRM routing failed: "
+            f"{data.get('message', data.get('code', 'unknown error'))}"
+        )
+
+    routes = data.get("routes", [])
+
+    if not routes:
+        raise RuntimeError(
+            "OSRM returned no route."
+        )
+
+    route = routes[0]
+
+    geometry = route.get("geometry")
+
+    if not isinstance(geometry, dict):
+        raise RuntimeError(
+            "OSRM route does not contain a valid GeoJSON geometry."
+        )
+
+    if geometry.get("type") != "LineString":
+        raise RuntimeError(
+            f"Unexpected OSRM geometry type: "
+            f"{geometry.get('type')!r}"
+        )
+
+    coordinates = geometry.get("coordinates", [])
+
+    if len(coordinates) < 2:
+        raise RuntimeError(
+            "OSRM returned an unusable route geometry."
+        )
+
+    return geometry
+
+
+# =========================================================
+# Validation helpers
+# =========================================================
+
+def validate_vehicle_inputs(
+    battery_percent: float,
+    battery_capacity_kwh: float,
+    efficiency_wh_per_km: float,
+    safety_reserve_percent: float,
+):
+    if not 0.0 <= battery_percent <= 100.0:
+        raise ValueError(
+            "battery_percent must be between 0 and 100."
+        )
+
+    if battery_capacity_kwh <= 0:
+        raise ValueError(
+            "battery_capacity_kwh must be greater than 0."
+        )
+
+    if efficiency_wh_per_km <= 0:
+        raise ValueError(
+            "efficiency_wh_per_km must be greater than 0."
+        )
+
+    if not 0.0 <= safety_reserve_percent < 100.0:
+        raise ValueError(
+            "safety_reserve_percent must be between 0 and 100."
+        )
 
 
 # =========================================================
@@ -57,27 +266,49 @@ def parse_args():
 # =========================================================
 
 def main():
-
     args = parse_args()
 
-    vehicle_connector_type = (
-        args.connector.strip()
-    )
+    vehicle_connector_type = args.connector.strip()
 
     if not vehicle_connector_type:
         raise ValueError(
             "Vehicle connector type cannot be empty."
         )
 
+    validate_vehicle_inputs(
+        battery_percent=args.battery_percent,
+        battery_capacity_kwh=args.battery_capacity_kwh,
+        efficiency_wh_per_km=args.efficiency_wh_per_km,
+        safety_reserve_percent=args.safety_reserve_percent,
+    )
+
+    # -----------------------------------------------------
+    # Fetch road route
+    # -----------------------------------------------------
+
+    route_geometry = get_osrm_route(
+        origin_lat=args.origin_lat,
+        origin_lng=args.origin_lng,
+        destination_lat=args.destination_lat,
+        destination_lng=args.destination_lng,
+    )
+
+    route_points = len(
+        route_geometry.get(
+            "coordinates",
+            [],
+        )
+    )
+
     # -----------------------------------------------------
     # Calculate vehicle safe range
     # -----------------------------------------------------
 
     safe_range_km = calculate_safe_range_km(
-        battery_percent=BATTERY_PERCENT,
-        battery_capacity_kwh=BATTERY_CAPACITY_KWH,
-        efficiency_wh_per_km=EFFICIENCY_WH_PER_KM,
-        safety_reserve_percent=SAFETY_RESERVE_PERCENT,
+        battery_percent=args.battery_percent,
+        battery_capacity_kwh=args.battery_capacity_kwh,
+        efficiency_wh_per_km=args.efficiency_wh_per_km,
+        safety_reserve_percent=args.safety_reserve_percent,
     )
 
     # -----------------------------------------------------
@@ -85,7 +316,8 @@ def main():
     # -----------------------------------------------------
 
     enriched = enrich_candidates(
-        vehicle_connector_type
+        route_geometry=route_geometry,
+        vehicle_connector_type=vehicle_connector_type,
     )
 
     candidates = enriched
@@ -107,63 +339,83 @@ def main():
 
     for candidate in evaluated:
 
+        charger_id = candidate["charger_id"]
+
         connector_status = candidate.get(
             "connector_compatibility",
             "UNKNOWN",
         )
 
-        recommendation_candidate = (
-            ChargerCandidate(
-                charger_id=candidate[
-                    "charger_id"
-                ],
+        # ---------------------------------------------
+        # Live reliability intelligence
+        # ---------------------------------------------
 
-                name=candidate[
-                    "name"
-                ],
+        reliability_score = get_reliability_score(
+            charger_id
+        )
 
-                city=candidate[
-                    "city"
-                ],
+        operational = get_operational_signals(
+            charger_id
+        )
 
-                state=candidate[
-                    "state"
-                ],
+        availability_score = operational.get(
+            "availability_score",
+            50.0,
+        )
 
-                route_progress_km=candidate[
-                    "route_progress_km"
-                ],
+        trust_score = operational.get(
+            "trust_score",
+            50.0,
+        )
 
-                road_access_km=candidate[
-                    "road_access_km"
-                ],
+        recommendation_candidate = ChargerCandidate(
+            charger_id=charger_id,
 
-                required_distance_km=candidate[
-                    "required_distance_km"
-                ],
+            name=candidate[
+                "name"
+            ],
 
-                range_safe=candidate[
-                    "range_safe"
-                ],
+            city=candidate[
+                "city"
+            ],
 
-                reliability_score=(
-                    get_reliability_score(
-                        candidate[
-                            "charger_id"
-                        ]
-                    )
-                ),
+            state=candidate[
+                "state"
+            ],
 
-                # Temporary prototype values.
-                availability_score=75.0,
+            # FIX:
+            # ChargerCandidate requires latitude/longitude.
+            latitude=candidate[
+                "latitude"
+            ],
 
-                # Temporary prototype values.
-                trust_score=70.0,
+            longitude=candidate[
+                "longitude"
+            ],
 
-                connector_compatibility=(
-                    connector_status
-                ),
-            )
+            route_progress_km=candidate[
+                "route_progress_km"
+            ],
+
+            road_access_km=candidate[
+                "road_access_km"
+            ],
+
+            required_distance_km=candidate[
+                "required_distance_km"
+            ],
+
+            range_safe=candidate[
+                "range_safe"
+            ],
+
+            reliability_score=reliability_score,
+
+            availability_score=availability_score,
+
+            trust_score=trust_score,
+
+            connector_compatibility=connector_status,
         )
 
         recommendation_candidates.append(
@@ -228,8 +480,23 @@ def main():
         "CHARGESURE END-TO-END INTELLIGENCE"
     )
 
+    print("=" * 110)
+
     print(
-        "=" * 110
+        f"Origin: "
+        f"{args.origin_lat:.5f}, "
+        f"{args.origin_lng:.5f}"
+    )
+
+    print(
+        f"Destination: "
+        f"{args.destination_lat:.5f}, "
+        f"{args.destination_lng:.5f}"
+    )
+
+    print(
+        f"OSRM route points: "
+        f"{route_points}"
     )
 
     print(
@@ -239,7 +506,7 @@ def main():
 
     print(
         f"Battery: "
-        f"{BATTERY_PERCENT:.0f}%"
+        f"{args.battery_percent:.0f}%"
     )
 
     print(
@@ -272,20 +539,16 @@ def main():
         f"{incompatible_count}"
     )
 
-    print(
-        "=" * 110
-    )
+    print("=" * 110)
 
     # -----------------------------------------------------
     # No recommendations
     # -----------------------------------------------------
 
     if not recommendations:
-
         print(
             "No safe compatible charger found."
         )
-
         return
 
     # -----------------------------------------------------
@@ -293,6 +556,10 @@ def main():
     # -----------------------------------------------------
 
     for result in recommendations:
+
+        operational = get_operational_signals(
+            result["charger_id"]
+        )
 
         print()
 
@@ -314,6 +581,36 @@ def main():
         print(
             f"   Reliability: "
             f"{result['reliability_score']}"
+        )
+
+        print(
+            f"   Availability: "
+            f"{result['availability_score']}"
+        )
+
+        print(
+            f"   Trust: "
+            f"{result['trust_score']}"
+        )
+
+        print(
+            f"   Crowd reports: "
+            f"{operational.get('crowd_report_count', 0)}"
+        )
+
+        print(
+            f"   Crowd signal: "
+            f"{operational.get('crowd_signal_score', 50.0)}"
+        )
+
+        print(
+            f"   Positive reports: "
+            f"{operational.get('positive_report_ratio', 0.0) * 100:.2f}%"
+        )
+
+        print(
+            f"   Negative reports: "
+            f"{operational.get('negative_report_ratio', 0.0) * 100:.2f}%"
         )
 
         print(
@@ -340,10 +637,7 @@ def main():
             "   Why:"
         )
 
-        for reason in result[
-            "reasons"
-        ]:
-
+        for reason in result["reasons"]:
             print(
                 f"     ✓ {reason}"
             )

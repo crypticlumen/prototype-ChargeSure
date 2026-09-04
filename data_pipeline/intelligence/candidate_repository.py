@@ -107,11 +107,13 @@ SELECT
 
     ARRAY_AGG(
         DISTINCT COALESCE(
-            ct.normalized_type,
+            NULLIF(TRIM(ct.normalized_type), ''),
+            NULLIF(TRIM(cc.connector_type), ''),
             'unknown'
         )
         ORDER BY COALESCE(
-            ct.normalized_type,
+            NULLIF(TRIM(ct.normalized_type), ''),
+            NULLIF(TRIM(cc.connector_type), ''),
             'unknown'
         )
     ) AS connector_types,
@@ -119,45 +121,130 @@ SELECT
     MAX(cc.power_kw) AS max_power_kw,
 
     CASE
+
+        /* ---------------------------------------------------------
+           1. Direct verified match
+           --------------------------------------------------------- */
         WHEN EXISTS (
             SELECT 1
             FROM charger_connectors cc2
-            JOIN connector_types ct2
-                ON ct2.raw_connector_type =
-                   cc2.connector_type
+            LEFT JOIN connector_types ct2
+                ON LOWER(TRIM(ct2.raw_connector_type))
+                 = LOWER(TRIM(cc2.connector_type))
+
             WHERE cc2.charger_id = c.id
               AND ct2.verified = TRUE
-              AND LOWER(ct2.normalized_type)
-                  = LOWER(%s)
+              AND (
+                    LOWER(TRIM(ct2.normalized_type))
+                        = LOWER(TRIM(%s))
+
+                    OR (
+                        LOWER(TRIM(%s)) IN (
+                            'ccs',
+                            'ccs2',
+                            'ccs combo 2',
+                            'combo 2',
+                            'ccs combo'
+                        )
+                        AND LOWER(TRIM(ct2.normalized_type)) IN (
+                            'ccs',
+                            'ccs2',
+                            'ccs combo 2',
+                            'combo 2',
+                            'ccs combo'
+                        )
+                    )
+
+                    OR (
+                        LOWER(TRIM(%s)) IN (
+                            'type2',
+                            'type 2',
+                            'ac type 2'
+                        )
+                        AND LOWER(TRIM(ct2.normalized_type)) IN (
+                            'type2',
+                            'type 2',
+                            'ac type 2'
+                        )
+                    )
+
+                    OR (
+                        LOWER(TRIM(%s)) IN (
+                            'gbt',
+                            'gb/t',
+                            'gb t',
+                            'gbt dc'
+                        )
+                        AND LOWER(TRIM(ct2.normalized_type)) IN (
+                            'gbt',
+                            'gb/t',
+                            'gb t',
+                            'gbt dc'
+                        )
+                    )
+
+                    OR (
+                        LOWER(TRIM(%s)) IN (
+                            'chademo',
+                            'cha de mo'
+                        )
+                        AND LOWER(TRIM(ct2.normalized_type)) IN (
+                            'chademo',
+                            'cha de mo'
+                        )
+                    )
+              )
         )
         THEN 'COMPATIBLE'
 
+
+        /* ---------------------------------------------------------
+           2. Unknown information exists
+           --------------------------------------------------------- */
         WHEN EXISTS (
             SELECT 1
             FROM charger_connectors cc3
             LEFT JOIN connector_types ct3
-                ON ct3.raw_connector_type =
-                   cc3.connector_type
+                ON LOWER(TRIM(ct3.raw_connector_type))
+                 = LOWER(TRIM(cc3.connector_type))
+
             WHERE cc3.charger_id = c.id
               AND (
-                  ct3.raw_connector_type IS NULL
-                  OR ct3.verified = FALSE
-                  OR ct3.normalized_type = 'unknown'
+                    ct3.raw_connector_type IS NULL
+                    OR ct3.verified = FALSE
+                    OR ct3.normalized_type IS NULL
+                    OR LOWER(TRIM(ct3.normalized_type)) = 'unknown'
               )
         )
         THEN 'UNKNOWN'
 
-        ELSE 'INCOMPATIBLE'
+
+        /* ---------------------------------------------------------
+           3. Connector data exists but does not match
+           --------------------------------------------------------- */
+        WHEN EXISTS (
+            SELECT 1
+            FROM charger_connectors cc4
+            WHERE cc4.charger_id = c.id
+        )
+        THEN 'INCOMPATIBLE'
+
+
+        /* ---------------------------------------------------------
+           4. No connector rows at all
+           --------------------------------------------------------- */
+        ELSE 'UNKNOWN'
+
     END AS compatibility
 
 FROM chargers c
 
-JOIN charger_connectors cc
+LEFT JOIN charger_connectors cc
     ON cc.charger_id = c.id
 
 LEFT JOIN connector_types ct
-    ON ct.raw_connector_type =
-       cc.connector_type
+    ON LOWER(TRIM(ct.raw_connector_type))
+     = LOWER(TRIM(cc.connector_type))
 
 WHERE c.charger_id = %s
 
@@ -165,15 +252,148 @@ GROUP BY c.id;
 """
 
 
+def _normalize_route_geometry(route_geometry: dict) -> dict:
+    """
+    Normalize common GeoJSON wrappers into a geometry object
+    accepted by PostGIS ST_GeomFromGeoJSON().
+
+    Supported:
+    - LineString
+    - MultiLineString
+    - Feature
+    - FeatureCollection
+    """
+
+    if not isinstance(route_geometry, dict):
+        raise ValueError(
+            "route_geometry must be a GeoJSON dictionary."
+        )
+
+    geometry_type = route_geometry.get("type")
+
+    # Already a geometry object.
+    if geometry_type in {
+        "LineString",
+        "MultiLineString",
+    }:
+        coordinates = route_geometry.get("coordinates")
+
+        if not coordinates:
+            raise ValueError(
+                f"GeoJSON {geometry_type} has no coordinates."
+            )
+
+        return {
+            "type": geometry_type,
+            "coordinates": coordinates,
+        }
+
+    # GeoJSON Feature.
+    if geometry_type == "Feature":
+        geometry = route_geometry.get("geometry")
+
+        if not isinstance(geometry, dict):
+            raise ValueError(
+                "GeoJSON Feature does not contain a valid geometry."
+            )
+
+        return _normalize_route_geometry(geometry)
+
+    # GeoJSON FeatureCollection.
+    if geometry_type == "FeatureCollection":
+        features = route_geometry.get("features", [])
+
+        if not features:
+            raise ValueError(
+                "GeoJSON FeatureCollection contains no features."
+            )
+
+        geometries = []
+
+        for feature in features:
+            if not isinstance(feature, dict):
+                continue
+
+            geometry = feature.get("geometry")
+
+            if not isinstance(geometry, dict):
+                continue
+
+            normalized = _normalize_route_geometry(geometry)
+
+            if normalized["type"] == "LineString":
+                geometries.append(
+                    normalized["coordinates"]
+                )
+
+            elif normalized["type"] == "MultiLineString":
+                geometries.extend(
+                    normalized["coordinates"]
+                )
+
+        if not geometries:
+            raise ValueError(
+                "GeoJSON FeatureCollection contains no usable "
+                "LineString geometry."
+            )
+
+        if len(geometries) == 1:
+            return {
+                "type": "LineString",
+                "coordinates": geometries[0],
+            }
+
+        return {
+            "type": "MultiLineString",
+            "coordinates": geometries,
+        }
+
+    raise ValueError(
+        f"Unsupported route GeoJSON type: {geometry_type!r}. "
+        "Expected LineString, MultiLineString, Feature, "
+        "or FeatureCollection."
+    )
+
+
+def _clean_connector_type(value) -> str:
+    """
+    Normalize connector labels before returning them to the
+    intelligence pipeline.
+    """
+
+    if value is None:
+        return "unknown"
+
+    value = str(value).strip()
+
+    if not value:
+        return "unknown"
+
+    return value
+
+
 def get_connector_enrichment(
     cursor,
     charger_id: str,
     vehicle_connector_type: str,
 ) -> dict:
+    """
+    Return connector information for one charger.
+
+    Important:
+    - No connector rows -> UNKNOWN.
+    - Verified matching connector -> COMPATIBLE.
+    - Connector rows exist but don't match -> INCOMPATIBLE.
+    - Unverified/unknown connector data -> UNKNOWN.
+    """
 
     cursor.execute(
         CONNECTOR_QUERY,
         (
+            vehicle_connector_type,
+            vehicle_connector_type,
+            vehicle_connector_type,
+            vehicle_connector_type,
             vehicle_connector_type,
             charger_id,
         ),
@@ -188,14 +408,31 @@ def get_connector_enrichment(
             "compatibility": "UNKNOWN",
         }
 
+    connector_types = [
+        _clean_connector_type(value)
+        for value in (row[1] or [])
+        if value is not None
+    ]
+
+    # Remove duplicate unknown labels while preserving order.
+    cleaned_types = []
+
+    for connector_type in connector_types:
+        if connector_type not in cleaned_types:
+            cleaned_types.append(connector_type)
+
     return {
-        "connector_types": row[1] or [],
+        "connector_types": cleaned_types,
         "max_power_kw": (
             float(row[2])
             if row[2] is not None
             else None
         ),
-        "compatibility": row[3],
+        "compatibility": (
+            str(row[3]).upper()
+            if row[3] is not None
+            else "UNKNOWN"
+        ),
     }
 
 
@@ -204,19 +441,35 @@ def get_route_candidates(
     vehicle_connector_type: str = "CCS",
 ) -> list[dict]:
     """
-    Get charger candidates around the supplied
-    current OSRM route geometry.
+    Get charger candidates around an OSRM route.
 
-    No dependency on the global latest route.
+    Returns:
+        list[dict]
     """
 
     if not route_geometry:
         return []
 
-    if not vehicle_connector_type.strip():
+    if not isinstance(route_geometry, dict):
+        raise ValueError(
+            "route_geometry must be a GeoJSON dictionary."
+        )
+
+    if not isinstance(vehicle_connector_type, str):
+        raise ValueError(
+            "vehicle_connector_type must be a string."
+        )
+
+    vehicle_connector_type = vehicle_connector_type.strip()
+
+    if not vehicle_connector_type:
         raise ValueError(
             "vehicle_connector_type cannot be empty."
         )
+
+    normalized_route_geometry = _normalize_route_geometry(
+        route_geometry
+    )
 
     connection = psycopg2.connect(**DB_CONFIG)
 
@@ -225,7 +478,11 @@ def get_route_candidates(
 
             cursor.execute(
                 QUERY,
-                (json.dumps(route_geometry),),
+                (
+                    json.dumps(
+                        normalized_route_geometry
+                    ),
+                ),
             )
 
             rows = cursor.fetchall()
@@ -259,26 +516,43 @@ def get_route_candidates(
                         "name": name,
                         "city": city,
                         "state": state,
-                        "latitude": float(latitude),
-                        "longitude": float(longitude),
-                        "distance_from_route_km": float(
-                            distance_from_route_km
+
+                        "latitude": (
+                            float(latitude)
+                            if latitude is not None
+                            else None
                         ),
-                        "route_progress_km": float(
-                            route_progress_km
+
+                        "longitude": (
+                            float(longitude)
+                            if longitude is not None
+                            else None
                         ),
-                        "route_point_lon": float(
-                            route_point_lon
+
+                        "distance_from_route_km": (
+                            float(distance_from_route_km)
                         ),
-                        "route_point_lat": float(
-                            route_point_lat
+
+                        "route_progress_km": (
+                            float(route_progress_km)
                         ),
+
+                        "route_point_lon": (
+                            float(route_point_lon)
+                        ),
+
+                        "route_point_lat": (
+                            float(route_point_lat)
+                        ),
+
                         "connector_types": connector[
                             "connector_types"
                         ],
+
                         "max_power_kw": connector[
                             "max_power_kw"
                         ],
+
                         "connector_compatibility": connector[
                             "compatibility"
                         ],

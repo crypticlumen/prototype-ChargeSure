@@ -69,23 +69,23 @@ def calculate_final_score(
         COMPATIBLE   -> positive signal
         UNKNOWN      -> neutral signal
         INCOMPATIBLE -> rejected before scoring
+
+    Final score weights:
+        Reliability  -> 40%
+        Distance     -> 20%
+        Availability -> 10%
+        Trust        -> 10%
+        Connector    -> 20%
     """
 
     if not range_safe:
         return 0.0
 
-    if (
-        connector_compatibility
-        == "INCOMPATIBLE"
-    ):
+    if connector_compatibility == "INCOMPATIBLE":
         return 0.0
 
-    if (
-        connector_compatibility
-        == "COMPATIBLE"
-    ):
+    if connector_compatibility == "COMPATIBLE":
         connector_score = 100.0
-
     else:
         connector_score = 50.0
 
@@ -138,35 +138,20 @@ def rank_chargers(
     # --------------------------------------------------
 
     for candidate in eligible_candidates:
-
-        distance_score = (
-            calculate_distance_score(
-                candidate.road_access_km,
-                max_access_km,
-            )
+        distance_score = calculate_distance_score(
+            candidate.road_access_km,
+            max_access_km,
         )
 
-        candidate.final_score = (
-            calculate_final_score(
-                reliability_score=(
-                    candidate.reliability_score
-                ),
-                range_safe=(
-                    candidate.range_safe
-                ),
-                distance_score=(
-                    distance_score
-                ),
-                availability_score=(
-                    candidate.availability_score
-                ),
-                trust_score=(
-                    candidate.trust_score
-                ),
-                connector_compatibility=(
-                    candidate.connector_compatibility
-                ),
-            )
+        candidate.final_score = calculate_final_score(
+            reliability_score=candidate.reliability_score,
+            range_safe=candidate.range_safe,
+            distance_score=distance_score,
+            availability_score=candidate.availability_score,
+            trust_score=candidate.trust_score,
+            connector_compatibility=(
+                candidate.connector_compatibility
+            ),
         )
 
     # --------------------------------------------------
@@ -184,29 +169,55 @@ def rank_chargers(
     return eligible_candidates
 
 
+def _reliability_quality(
+    reliability_score: float,
+) -> str:
+    """
+    Convert the numerical reliability score into a
+    user-facing quality classification.
+
+    This is intentionally separate from prediction
+    confidence. A prediction may be low but highly
+    confident based on available evidence.
+    """
+
+    score = max(
+        0.0,
+        min(100.0, reliability_score),
+    )
+
+    if score >= 85.0:
+        return "High"
+
+    if score >= 70.0:
+        return "Good"
+
+    if score >= 40.0:
+        return "Moderate"
+
+    if score >= 20.0:
+        return "Low"
+
+    return "Very low"
+
+
 def get_recommendation_reason(
     candidate: ChargerCandidate,
 ) -> List[str]:
 
-    reasons = []
+    reasons: List[str] = []
 
     if candidate.range_safe:
         reasons.append(
             "Within the vehicle's safe reachable range"
         )
 
-    if (
-        candidate.connector_compatibility
-        == "COMPATIBLE"
-    ):
+    if candidate.connector_compatibility == "COMPATIBLE":
         reasons.append(
             "Connector compatible with vehicle"
         )
 
-    elif (
-        candidate.connector_compatibility
-        == "UNKNOWN"
-    ):
+    elif candidate.connector_compatibility == "UNKNOWN":
         reasons.append(
             "Connector compatibility could not be verified"
         )
@@ -221,24 +232,33 @@ def get_recommendation_reason(
             "Low road access distance"
         )
 
-    if candidate.reliability_score >= 85:
-        reasons.append(
-            "High reliability score"
-        )
+    reliability_quality = _reliability_quality(
+        candidate.reliability_score
+    )
 
-    elif candidate.reliability_score >= 70:
-        reasons.append(
-            "Good reliability score"
-        )
+    reasons.append(
+        f"{reliability_quality} reliability "
+        f"({candidate.reliability_score:.1f}/100)"
+    )
 
     if candidate.availability_score >= 80:
         reasons.append(
             "High availability"
         )
 
+    elif candidate.availability_score >= 60:
+        reasons.append(
+            "Moderate availability"
+        )
+
     if candidate.trust_score >= 80:
         reasons.append(
             "Strong user trust"
+        )
+
+    elif candidate.trust_score >= 60:
+        reasons.append(
+            "Moderate user trust"
         )
 
     return reasons
@@ -260,12 +280,14 @@ def recommend(
         start=1,
     ):
 
+        reliability_quality = _reliability_quality(
+            candidate.reliability_score
+        )
+
         recommendations.append(
             {
                 "rank": rank,
-                "charger_id": (
-                    candidate.charger_id
-                ),
+                "charger_id": candidate.charger_id,
                 "name": candidate.name,
                 "city": candidate.city,
                 "state": candidate.state,
@@ -292,6 +314,8 @@ def recommend(
                     2,
                 ),
 
+                "reliability_quality": reliability_quality,
+
                 "availability_score": round(
                     candidate.availability_score,
                     2,
@@ -306,18 +330,12 @@ def recommend(
                     candidate.connector_compatibility
                 ),
 
-                "final_score": (
-                    candidate.final_score
-                ),
+                "final_score": candidate.final_score,
 
-                "range_safe": (
-                    candidate.range_safe
-                ),
+                "range_safe": candidate.range_safe,
 
-                "reasons": (
-                    get_recommendation_reason(
-                        candidate
-                    )
+                "reasons": get_recommendation_reason(
+                    candidate
                 ),
             }
         )
