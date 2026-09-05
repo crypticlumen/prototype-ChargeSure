@@ -1,7 +1,9 @@
 import json
+import os
 from pathlib import Path
 
 import psycopg2
+from psycopg2.extras import execute_values
 
 
 INPUT_FILE = Path(
@@ -9,17 +11,19 @@ INPUT_FILE = Path(
 )
 
 
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5432,
-    "dbname": "chargesure",
-    "user": "chargesure",
-    "password": "chargesure_dev",
-}
+def get_database_url() -> str:
+    """Return the PostgreSQL connection URL from DATABASE_URL."""
+    database_url = os.getenv("DATABASE_URL")
+
+    if not database_url:
+        raise RuntimeError(
+            "DATABASE_URL environment variable is not set."
+        )
+
+    return database_url
 
 
 def main():
-
     if not INPUT_FILE.exists():
         raise FileNotFoundError(
             f"File not found: {INPUT_FILE}"
@@ -31,111 +35,105 @@ def main():
     ) as file:
         chargers = json.load(file)
 
-    print(
-        f"Loading {len(chargers)} chargers..."
+    print(f"Loading {len(chargers)} chargers...")
+
+    database_url = get_database_url()
+
+    conn = psycopg2.connect(
+        database_url,
+        connect_timeout=20,
     )
 
-    conn = psycopg2.connect(**DB_CONFIG)
-
     try:
+        rows = []
+
+        for charger in chargers:
+            rows.append(
+                (
+                    charger["charger_id"],
+                    charger["source"],
+                    charger["source_id"],
+                    charger["name"],
+                    charger["operator"],
+                    charger["address"],
+                    charger["city"],
+                    charger["state"],
+                    charger["country"],
+                    charger["latitude"],
+                    charger["longitude"],
+                    charger["longitude"],
+                    charger["latitude"],
+                    charger["power_kw"],
+                    charger.get("number_of_points"),
+                    charger["status"],
+                    charger["last_verified_at"],
+                )
+            )
 
         with conn.cursor() as cur:
-
-            inserted = 0
-            skipped = 0
-
-            for charger in chargers:
-
-                charger_id = charger["charger_id"]
-
-                # Prevent duplicate insertion.
-                cur.execute(
-                    """
-                    SELECT 1
-                    FROM chargers
-                    WHERE charger_id = %s
-                    """,
-                    (charger_id,)
+            execute_values(
+                cur,
+                """
+                INSERT INTO chargers (
+                    charger_id,
+                    source,
+                    source_id,
+                    name,
+                    operator,
+                    address,
+                    city,
+                    state,
+                    country,
+                    latitude,
+                    longitude,
+                    location,
+                    power_kw,
+                    number_of_points,
+                    status,
+                    last_verified_at
                 )
-
-                if cur.fetchone():
-                    skipped += 1
-                    continue
-
-                cur.execute(
-                    """
-                    INSERT INTO chargers (
-                        charger_id,
-                        source,
-                        source_id,
-                        name,
-                        operator,
-                        address,
-                        city,
-                        state,
-                        country,
-                        latitude,
-                        longitude,
-                        location,
-                        power_kw,
-                        number_of_points,
-                        status,
-                        last_verified_at
-                    )
-                    VALUES (
-                        %s,
-                        %s,
-                        %s,
-                        %s,
-                        %s,
-                        %s,
-                        %s,
-                        %s,
-                        %s,
-                        %s,
-                        %s,
-                        ST_SetSRID(
-                            ST_MakePoint(%s, %s),
-                            4326
-                        )::geography,
-                        %s,
-                        %s,
-                        %s,
-                        %s
-                    )
-                    """,
-                    (
-                        charger["charger_id"],
-                        charger["source"],
-                        charger["source_id"],
-                        charger["name"],
-                        charger["operator"],
-                        charger["address"],
-                        charger["city"],
-                        charger["state"],
-                        charger["country"],
-                        charger["latitude"],
-                        charger["longitude"],
-                        charger["longitude"],
-                        charger["latitude"],
-                        charger["power_kw"],
-                        charger.get(
-                            "number_of_points"
-                        ),
-                        charger["status"],
-                        charger["last_verified_at"],
-                    )
+                VALUES %s
+                ON CONFLICT (charger_id) DO NOTHING
+                """,
+                rows,
+                template="""
+                (
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    ST_SetSRID(
+                        ST_MakePoint(%s, %s),
+                        4326
+                    )::geography,
+                    %s,
+                    %s,
+                    %s,
+                    %s
                 )
+                """,
+                page_size=500,
+            )
 
-                inserted += 1
+            inserted = cur.rowcount
 
-            conn.commit()
+        conn.commit()
 
-            print()
-            print("LOAD COMPLETE")
-            print("=" * 50)
-            print(f"Inserted: {inserted}")
-            print(f"Skipped:  {skipped}")
+        skipped = len(chargers) - inserted
+
+        print()
+        print("LOAD COMPLETE")
+        print("=" * 50)
+        print(f"Total records: {len(chargers)}")
+        print(f"Inserted:      {inserted}")
+        print(f"Skipped:       {skipped}")
 
     except Exception:
         conn.rollback()

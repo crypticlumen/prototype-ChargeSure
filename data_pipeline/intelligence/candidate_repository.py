@@ -189,6 +189,7 @@ SELECT
                             'chademo',
                             'cha de mo'
                         )
+                    )
               )
         )
         THEN 'COMPATIBLE'
