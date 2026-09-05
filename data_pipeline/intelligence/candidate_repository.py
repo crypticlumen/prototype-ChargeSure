@@ -1,14 +1,11 @@
 import json
+
 import psycopg2
 
+from app.config import get_settings
 
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5432,
-    "dbname": "chargesure",
-    "user": "chargesure",
-    "password": "chargesure_dev",
-}
+
+settings = get_settings()
 
 
 QUERY = """
@@ -192,7 +189,6 @@ SELECT
                             'chademo',
                             'cha de mo'
                         )
-                    )
               )
         )
         THEN 'COMPATIBLE'
@@ -443,6 +439,10 @@ def get_route_candidates(
     """
     Get charger candidates around an OSRM route.
 
+    The database connection is taken from ChargeSure's central
+    DATABASE_URL configuration so the same code works locally
+    and on Render.
+
     Returns:
         list[dict]
     """
@@ -471,7 +471,10 @@ def get_route_candidates(
         route_geometry
     )
 
-    connection = psycopg2.connect(**DB_CONFIG)
+    # Use the same DATABASE_URL used by the FastAPI application.
+    # Locally this points to the local PostgreSQL container.
+    # On Render this points to the managed Render PostgreSQL instance.
+    connection = psycopg2.connect(settings.database_url)
 
     try:
         with connection.cursor() as cursor:
