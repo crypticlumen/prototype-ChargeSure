@@ -20,3 +20,4 @@ python-dotenv==1.0.1
 apscheduler==3.10.4
 shapely==2.0.6
 email-validator==2.2.0
+requests==2.32.5
