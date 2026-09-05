@@ -1,4 +1,3 @@
-
 import logging
 
 from fastapi import FastAPI, Request
@@ -9,7 +8,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from app.config import get_settings
-from app.database import engine, init_postgis
+from app.database import init_postgis
 from app.routers import auth, chargers, routes, reliability, booking, beckn, ingestion
 from app.tasks.nightly_retrain import start_scheduler
 
@@ -32,13 +31,12 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Explicit frontend origins.
-# This is required when credentials are enabled.
 CORS_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://localhost:4173",
     "http://127.0.0.1:4173",
+    "https://chargesure.onrender.com",
 ]
 
 app.add_middleware(
@@ -98,4 +96,3 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"detail": "Internal server error"},
     )
-
