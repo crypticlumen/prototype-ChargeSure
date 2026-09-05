@@ -1,12 +1,9 @@
 import psycopg2
 
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5432,
-    "dbname": "chargesure",
-    "user": "chargesure",
-    "password": "chargesure_dev",
-}
+from app.config import get_settings
+
+
+settings = get_settings()
 
 MODEL_VERSION = "xgboost-v1"
 
@@ -33,7 +30,11 @@ def get_reliability_details(charger_id: str) -> dict:
         LIMIT 1;
     """
 
-    connection = psycopg2.connect(**DB_CONFIG)
+    # Use ChargeSure's central DATABASE_URL.
+    # Local development and Render production can therefore
+    # use the same reliability code.
+    connection = psycopg2.connect(settings.database_url)
+
     try:
         with connection.cursor() as cursor:
             cursor.execute(query, (charger_id, MODEL_VERSION))
@@ -90,7 +91,10 @@ def get_operational_signals(charger_id: str) -> dict:
         LIMIT 1;
     """
 
-    connection = psycopg2.connect(**DB_CONFIG)
+    # Use the same configured database connection as the
+    # main ChargeSure application.
+    connection = psycopg2.connect(settings.database_url)
+
     try:
         with connection.cursor() as cursor:
             cursor.execute(query, (charger_id,))
@@ -133,12 +137,21 @@ def get_operational_signals(charger_id: str) -> dict:
             return {
                 "availability_score": round(availability_score, 2),
                 "trust_score": round(average_crowd_trust, 2),
-                "positive_report_ratio": round(positive_report_ratio, 4),
-                "negative_report_ratio": round(negative_report_ratio, 4),
+                "positive_report_ratio": round(
+                    positive_report_ratio,
+                    4,
+                ),
+                "negative_report_ratio": round(
+                    negative_report_ratio,
+                    4,
+                ),
                 "total_sessions": total_sessions,
                 "total_status_events": total_status_events,
                 "crowd_report_count": crowd_report_count,
-                "crowd_signal_score": round(crowd_signal_score, 2),
+                "crowd_signal_score": round(
+                    crowd_signal_score,
+                    2,
+                ),
                 "crowd_signal_strength": crowd_signal_strength,
             }
     finally:
